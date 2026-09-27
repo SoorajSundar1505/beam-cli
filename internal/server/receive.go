@@ -41,6 +41,9 @@ func Serve(ctx context.Context, opt Options) error {
 	if err != nil {
 		return err
 	}
+	if opt.Log != nil {
+		opt.Log(fmt.Sprintf("TCP listener active on %s", ln.Addr()))
+	}
 	if opt.Ready != nil {
 		opt.Ready()
 	}
@@ -57,6 +60,9 @@ func Serve(ctx context.Context, opt Options) error {
 				return nil
 			}
 			return err
+		}
+		if opt.Log != nil {
+			opt.Log(fmt.Sprintf("accepted TCP connection from %s", raw.RemoteAddr()))
 		}
 		active.Add(1)
 		go func(raw net.Conn) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -56,6 +57,40 @@ func (a *Advertiser) Close() {
 	if a != nil && a.server != nil {
 		a.server.Shutdown()
 	}
+}
+
+// LocalAddresses returns active, non-loopback addresses that mDNS may
+// advertise. It is intended for diagnostics; zeroconf still selects the
+// actual interfaces used for DNS-SD.
+func LocalAddresses() []string {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch value := addr.(type) {
+			case *net.IPNet:
+				ip = value.IP
+			case *net.IPAddr:
+				ip = value.IP
+			}
+			if ip != nil && !ip.IsLoopback() {
+				out = append(out, ip.String())
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func Browse(ctx context.Context, timeout time.Duration) ([]Remote, error) {

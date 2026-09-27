@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/signal"
 	"strconv"
@@ -26,6 +27,15 @@ import (
 	"beam/internal/server"
 	"beam/internal/storage"
 	"beam/internal/transfer"
+)
+
+var (
+	startDaemon            = daemon.Start
+	stopDaemon             = daemon.Stop
+	daemonStatus           = daemon.Status
+	enableDaemonAutostart  = daemon.EnableAutostart
+	disableDaemonAutostart = daemon.DisableAutostart
+	daemonAutostartEnabled = daemon.AutostartEnabled
 )
 
 func NewRoot() *cobra.Command {
@@ -56,10 +66,24 @@ func cmdInit() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "Initialized %s (%s)\n", ident.Config.Name, ident.Config.Type)
 			fmt.Fprintf(cmd.OutOrStdout(), "Device ID: %s\n", ident.Config.DeviceID)
 			fmt.Fprintf(cmd.OutOrStdout(), "Config:    %s\n", cfg)
+			autostartReady := true
+			if err := enableDaemonAutostart(); err != nil {
+				if errors.Is(err, daemon.ErrAutostartUnsupported) {
+					autostartReady = false
+				} else {
+					return fmt.Errorf("device initialized, but autostart setup failed: %w", err)
+				}
+			}
 			if err := ensureDaemon(); err != nil {
 				return fmt.Errorf("device initialized, but background receiver failed to start: %w", err)
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "Background receiver started")
+			fmt.Fprintln(cmd.OutOrStdout(), "✓ BEAM is ready")
+			fmt.Fprintln(cmd.OutOrStdout(), "✓ Background receiver started")
+			if autostartReady {
+				fmt.Fprintln(cmd.OutOrStdout(), "✓ Autostart enabled")
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), "• Autostart is unavailable on this platform")
+			}
 			return nil
 		},
 	}
@@ -79,7 +103,7 @@ On the second device, run beam pair --code NNNNNN.`,
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			if strings.TrimSpace(code) == "" {
-				if err := daemon.Stop(); err != nil {
+				if err := stopDaemon(); err != nil {
 					return fmt.Errorf("pause background receiver for pairing: %w", err)
 				}
 				restartOnExit := true
@@ -277,11 +301,11 @@ func cmdStart() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_ = MustIdent()
 			if autostart {
-				if err := daemon.EnableAutostart(); err != nil {
+				if err := enableDaemonAutostart(); err != nil {
 					return fmt.Errorf("enable automatic startup: %w", err)
 				}
 			}
-			if err := daemon.Start(); err != nil {
+			if err := startDaemon(); err != nil {
 				if errors.Is(err, daemon.ErrAlreadyRunning) {
 					fmt.Fprintln(cmd.OutOrStdout(), "BEAM daemon is already running.")
 					return nil
@@ -300,7 +324,7 @@ func cmdStart() *cobra.Command {
 }
 
 func ensureDaemon() error {
-	err := daemon.Start()
+	err := startDaemon()
 	if errors.Is(err, daemon.ErrAlreadyRunning) {
 		return nil
 	}
@@ -313,11 +337,11 @@ func cmdStop() *cobra.Command {
 		Use:   "stop",
 		Short: "Stop the background receiver",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := daemon.Stop(); err != nil {
+			if err := stopDaemon(); err != nil {
 				return err
 			}
 			if disableAutostart {
-				if err := daemon.DisableAutostart(); err != nil {
+				if err := disableDaemonAutostart(); err != nil {
 					return fmt.Errorf("disable automatic startup: %w", err)
 				}
 			}
@@ -337,14 +361,33 @@ func cmdStatus() *cobra.Command {
 		Use:   "status",
 		Short: "Show background receiver status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			state, running, err := daemon.Status()
+			ident, err := device.Load()
 			if err != nil {
 				return err
 			}
+			state, running, err := daemonStatus()
+			if err != nil {
+				return err
+			}
+			autostart, err := daemonAutostartEnabled()
+			if err != nil {
+				return fmt.Errorf("check autostart status: %w", err)
+			}
 			if running {
-				fmt.Fprintf(cmd.OutOrStdout(), "BEAM daemon is running (PID %d).\n", state.PID)
+				fmt.Fprintln(cmd.OutOrStdout(), "BEAM ● ONLINE")
 			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), "BEAM daemon is stopped.")
+				fmt.Fprintln(cmd.OutOrStdout(), "BEAM ○ OFFLINE")
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Device: %s\n", ident.Config.Name)
+			if running {
+				fmt.Fprintf(cmd.OutOrStdout(), "Daemon: running (PID %d)\n", state.PID)
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), "Daemon: stopped")
+			}
+			if autostart {
+				fmt.Fprintln(cmd.OutOrStdout(), "Autostart: enabled")
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), "Autostart: disabled")
 			}
 			entries, err := queue.List()
 			if err == nil {
@@ -356,15 +399,36 @@ func cmdStatus() *cobra.Command {
 }
 
 func cmdDaemon() *cobra.Command {
-	return &cobra.Command{
+	var background bool
+	c := &cobra.Command{
 		Use:   "daemon",
 		Short: "Run the daemon in the foreground for debugging",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			var logFile *os.File
+			if background {
+				path, err := storage.DaemonLogPath()
+				if err != nil {
+					return err
+				}
+				logFile, err = os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+				if err != nil {
+					return err
+				}
+				defer logFile.Close()
+				log.SetOutput(logFile)
+			}
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			return daemon.Run(ctx)
+			err := daemon.Run(ctx)
+			if background && err != nil {
+				log.Printf("daemon exited with error: %v", err)
+			}
+			return err
 		},
 	}
+	c.Flags().BoolVar(&background, "background", false, "redirect daemon logs to the local BEAM log")
+	_ = c.Flags().MarkHidden("background")
+	return c
 }
 
 func cmdClipboard() *cobra.Command {

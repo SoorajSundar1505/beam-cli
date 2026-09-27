@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"time"
@@ -41,16 +42,25 @@ func Run(ctx context.Context) error {
 	}
 	defer store.Close()
 	clip := clipboard.New(clipboard.NewNative(), store)
+	log.Printf(
+		"BEAM daemon starting: pid=%d device=%q bind=:%d",
+		os.Getpid(), ident.Config.Name, ident.Config.ListenPort,
+	)
 	go advertiseLoop(ctx, ident)
 	go watchClipboard(ctx, clip)
 	go processQueue(ctx, ident)
 
-	return server.Serve(ctx, server.Options{
+	err = server.Serve(ctx, server.Options{
 		Ident: ident, Downloads: downloads, History: store, Clip: clip,
 		Prompt: func(string, protocol.Offer) bool { return true },
 		Log:    func(s string) { log.Print(s) },
 		Ready:  func() { go writeState(ctx) },
 	})
+	if err != nil {
+		return fmt.Errorf("daemon listener failed on port %d: %w", ident.Config.ListenPort, err)
+	}
+	log.Printf("BEAM daemon stopped: pid=%d", os.Getpid())
+	return nil
 }
 
 func watchStopRequest(ctx context.Context, cancel context.CancelFunc, path string) {
@@ -77,6 +87,11 @@ func advertiseLoop(ctx context.Context, ident *device.Identity) {
 			Type: string(ident.Config.Type), Port: ident.Config.ListenPort,
 		}, false)
 		if err == nil {
+			log.Printf(
+				"mDNS advertising: service=%s device=%q addresses=%v port=%d",
+				protocol.ServiceType, ident.Config.Name,
+				discovery.LocalAddresses(), ident.Config.ListenPort,
+			)
 			<-ctx.Done()
 			adv.Close()
 			return

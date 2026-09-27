@@ -12,14 +12,28 @@ func EnableAutostart() error {
 	if err != nil {
 		return err
 	}
-	command := fmt.Sprintf(`"%s" daemon`, exe)
-	return exec.Command("schtasks", "/Create", "/SC", "ONLOGON", "/TN", "BEAM", "/TR", command, "/F").Run()
+	command := fmt.Sprintf(`"%s" daemon --background`, exe)
+	return hiddenCommand(
+		"schtasks", "/Create", "/SC", "ONLOGON", "/TN", "BEAM",
+		"/TR", command, "/RL", "LIMITED", "/F",
+	).Run()
 }
 
 func DisableAutostart() error {
-	err := exec.Command("schtasks", "/Delete", "/TN", "BEAM", "/F").Run()
+	err := hiddenCommand("schtasks", "/Delete", "/TN", "BEAM", "/F").Run()
 	if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
 		return nil
 	}
 	return err
+}
+
+func AutostartEnabled() (bool, error) {
+	err := hiddenCommand("schtasks", "/Query", "/TN", "BEAM").Run()
+	if err == nil {
+		return true, nil
+	}
+	if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
 }

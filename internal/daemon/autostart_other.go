@@ -2,12 +2,14 @@
 
 package daemon
 
-import "fmt"
-
 func EnableAutostart() error {
-	return fmt.Errorf("automatic startup is currently supported on macOS and Windows")
+	return ErrAutostartUnsupported
 }
 
 func DisableAutostart() error {
 	return nil
+}
+
+func AutostartEnabled() (bool, error) {
+	return false, nil
 }

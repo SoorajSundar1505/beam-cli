@@ -29,7 +29,7 @@ func EnableAutostart() error {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>so.beam.cli</string>
-  <key>ProgramArguments</key><array><string>%s</string><string>daemon</string></array>
+  <key>ProgramArguments</key><array><string>%s</string><string>daemon</string><string>--background</string></array>
   <key>RunAtLoad</key><true/>
 </dict></plist>
 `, escaped)
@@ -51,4 +51,17 @@ func DisableAutostart() error {
 		return nil
 	}
 	return err
+}
+
+func AutostartEnabled() (bool, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false, err
+	}
+	path := filepath.Join(home, "Library", "LaunchAgents", "so.beam.cli.plist")
+	_, err = os.Stat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return err == nil, err
 }

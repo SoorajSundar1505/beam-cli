@@ -111,8 +111,15 @@ On each computer:
 beam init --name MacBook
 ```
 
-This writes a device ID, display name, Ed25519 key (`0600`), and empty peer
-list under your OS config directory (`BEAM_CONFIG_DIR` overrides it).
+This writes the local identity and configuration, installs user-level startup
+on macOS or Windows, and starts the background receiver immediately. No
+administrator privileges are required.
+
+```text
+✓ BEAM is ready
+✓ Background receiver started
+✓ Autostart enabled
+```
 
 ### Pair
 
@@ -143,7 +150,7 @@ beam stop
 beam start
 ```
 
-To start BEAM automatically when you sign in on macOS or Windows:
+Autostart is enabled by `beam init`. To re-enable it later:
 
 ```bash
 beam start --autostart
@@ -159,6 +166,12 @@ beam stop --disable-autostart
 run `beam stop` first so the foreground receiver can use the listening port.
 For daemon-specific debugging, `beam daemon` runs the same service in the
 foreground and writes errors directly to the terminal.
+
+Background daemon diagnostics, including the TCP bind address, accepted
+connections, and mDNS addresses/port, are written to `runtime/daemon.log`
+inside BEAM's local data directory. On Windows this is normally under
+`%APPDATA%\beam\data`; on macOS it is under
+`~/Library/Application Support/beam`.
 
 ### Offline transfers
 
@@ -178,7 +191,7 @@ permissions.
 
 | Command | Purpose |
 | --- | --- |
-| `beam init` | Create identity and config |
+| `beam init` | Create identity, enable autostart, and start the receiver |
 | `beam pair` | Host pairing (prints code) |
 | `beam pair --code NNNNNN` | Join pairing |
 | `beam devices` | This device + paired peers (online/offline) |

@@ -14,6 +14,7 @@ import (
 )
 
 var ErrAlreadyRunning = errors.New("daemon is already running")
+var ErrAutostartUnsupported = errors.New("automatic startup is not supported on this platform")
 
 var (
 	heartbeatFreshFor = 6 * time.Second
@@ -112,7 +113,7 @@ func launchBackgroundProcess(logPath string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(exe, "daemon")
+	cmd := exec.Command(exe, "daemon", "--background")
 	cmd.Stdin = nil
 	cmd.Stdout = log
 	cmd.Stderr = log
