@@ -13,27 +13,22 @@ import (
 	"beam/internal/transfer"
 )
 
-const (
-	markOnline  = "*"
-	markOffline = "o"
-)
-
 func headline(out io.Writer, running bool) string {
 	if running {
-		return "BEAM " + markOnline + " " + paint(out, "ONLINE", "32")
+		return "BEAM [" + paint(out, "ONLINE", "32") + "]"
 	}
-	return "BEAM " + markOffline + " " + paint(out, "OFFLINE", "31")
+	return "BEAM [" + paint(out, "OFFLINE", "31") + "]"
 }
 
 func deviceState(status string) string {
-	if strings.HasPrefix(status, "online") || status == "this device" {
-		label := "online"
-		if status == "this device" {
-			label = "this device"
-		}
-		return markOnline + " " + label
+	switch {
+	case strings.HasPrefix(status, "online"):
+		return "[ONLINE]"
+	case status == "this device":
+		return "[THIS DEVICE]"
+	default:
+		return "[OFFLINE]"
 	}
-	return markOffline + " offline"
 }
 
 func renderDevices(out io.Writer, running bool, name string, details []string, items []device.Listed) {

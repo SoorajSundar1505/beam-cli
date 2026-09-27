@@ -103,7 +103,7 @@ func TestDevicesFirstRunIsIdempotent(t *testing.T) {
 		t.Fatalf("identity was not created: %+v %v", ident, err)
 	}
 	for _, output := range []string{first, second} {
-		for _, want := range []string{"BEAM * ONLINE", "Nearby devices", "1. Windows-PC", "* online"} {
+		for _, want := range []string{"BEAM [ONLINE]", "Nearby devices", "1. Windows-PC", "[ONLINE]"} {
 			if !strings.Contains(output, want) {
 				t.Errorf("output missing %q:\n%s", want, output)
 			}
@@ -146,12 +146,12 @@ func TestStatusReporting(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"BEAM * ONLINE",
+		"BEAM [ONLINE]",
 		"Device: MacBook",
 		"Daemon: running (PID 4242)",
 		"Autostart: enabled",
 		"1. Windows-PC",
-		"* online",
+		"[ONLINE]",
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("status missing %q:\n%s", want, output)
