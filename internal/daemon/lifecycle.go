@@ -13,6 +13,15 @@ import (
 	"beam/internal/storage"
 )
 
+var ErrAlreadyRunning = errors.New("daemon is already running")
+
+var (
+	heartbeatFreshFor = 6 * time.Second
+	startupTimeout    = 5 * time.Second
+	pollInterval      = 100 * time.Millisecond
+	launchBackground  = launchBackgroundProcess
+)
+
 type State struct {
 	PID       int       `json:"pid"`
 	StartedAt time.Time `json:"started_at"`
@@ -35,7 +44,7 @@ func Status() (State, bool, error) {
 	if err := json.Unmarshal(b, &state); err != nil {
 		return State{}, false, nil
 	}
-	running := state.PID > 0 && time.Since(state.Heartbeat) < 10*time.Second
+	running := state.PID > 0 && time.Since(state.Heartbeat) < heartbeatFreshFor
 	return state, running, nil
 }
 
@@ -43,13 +52,59 @@ func Start() error {
 	if _, running, err := Status(); err != nil {
 		return err
 	} else if running {
-		return nil
+		return ErrAlreadyRunning
 	}
-	exe, err := os.Executable()
+
+	lockPath, err := storage.DaemonStartLockPath()
 	if err != nil {
 		return err
 	}
+	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if os.IsExist(err) {
+		if _, running, _ := Status(); running {
+			return ErrAlreadyRunning
+		}
+		return fmt.Errorf("daemon start is already in progress")
+	}
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = lock.Close()
+		_ = os.Remove(lockPath)
+	}()
+
+	// Recheck after taking the lock so concurrent starts cannot launch twice.
+	if _, running, err := Status(); err != nil {
+		return err
+	} else if running {
+		return ErrAlreadyRunning
+	}
+	statePath, _ := storage.DaemonStatePath()
+	stopPath, _ := storage.DaemonStopPath()
+	_ = os.Remove(statePath)
+	_ = os.Remove(stopPath)
+
 	logPath, err := storage.DaemonLogPath()
+	if err != nil {
+		return err
+	}
+	if err := launchBackground(logPath); err != nil {
+		return err
+	}
+
+	deadline := time.Now().Add(startupTimeout)
+	for time.Now().Before(deadline) {
+		if _, running, _ := Status(); running {
+			return nil
+		}
+		time.Sleep(pollInterval)
+	}
+	return fmt.Errorf("daemon did not start; see %s", logPath)
+}
+
+func launchBackgroundProcess(logPath string) error {
+	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
@@ -68,15 +123,7 @@ func Start() error {
 	}
 	_ = cmd.Process.Release()
 	_ = log.Close()
-
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, running, _ := Status(); running {
-			return nil
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return fmt.Errorf("daemon did not start; see %s", logPath)
+	return nil
 }
 
 func Stop() error {
@@ -95,13 +142,13 @@ func Stop() error {
 		return err
 	}
 	path, _ := storage.DaemonStatePath()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(heartbeatFreshFor + time.Second)
 	for time.Now().Before(deadline) {
 		if _, running, _ := Status(); !running {
 			_ = os.Remove(path)
 			return nil
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(pollInterval)
 	}
 	p, err := os.FindProcess(state.PID)
 	if err != nil {

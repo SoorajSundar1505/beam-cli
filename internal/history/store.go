@@ -184,55 +184,21 @@ func (s *Store) Search(query string, limit int) ([]Item, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	// Prefix and substring matching via FTS; fall back to LIKE for robustness.
-	fts := ftsQuery(query)
-	rows, err := s.db.Query(`
-SELECT c.id, c.kind, c.text_content, c.mime, c.filename, c.size, c.blob_path, c.created_at
-FROM clipboard c
-JOIN clipboard_fts f ON f.rowid = c.id
-WHERE clipboard_fts MATCH ?
-ORDER BY c.created_at DESC
-LIMIT ?`, fts, limit)
-	if err != nil {
-		return s.likeSearch(query, limit)
-	}
-	defer rows.Close()
-	items, err := scanItems(rows)
-	if err != nil {
-		return nil, err
-	}
-	if len(items) == 0 {
-		return s.likeSearch(query, limit)
-	}
-	return items, nil
-}
-
-func (s *Store) likeSearch(query string, limit int) ([]Item, error) {
-	pat := "%" + query + "%"
+	// Query the source table directly. FTS token/prefix matching cannot provide
+	// true substring matching and an older database may have an incomplete FTS
+	// index. INSTR also avoids treating user input as a LIKE pattern.
 	rows, err := s.db.Query(`
 SELECT id, kind, text_content, mime, filename, size, blob_path, created_at
 FROM clipboard
-WHERE text_content LIKE ? OR filename LIKE ?
-ORDER BY created_at DESC
-LIMIT ?`, pat, pat, limit)
+WHERE instr(lower(coalesce(text_content, '')), lower(?)) > 0
+   OR instr(lower(coalesce(filename, '')), lower(?)) > 0
+ORDER BY created_at DESC, id DESC
+LIMIT ?`, query, query, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	return scanItems(rows)
-}
-
-func ftsQuery(q string) string {
-	parts := strings.Fields(q)
-	for i, p := range parts {
-		p = strings.Trim(p, `"'`)
-		p = strings.ReplaceAll(p, `"`, "")
-		if p == "" {
-			continue
-		}
-		parts[i] = `"` + p + `"*`
-	}
-	return strings.Join(parts, " ")
 }
 
 func (s *Store) GetLatest() (*Item, error) {

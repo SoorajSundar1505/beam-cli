@@ -56,7 +56,7 @@ func cmdInit() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "Initialized %s (%s)\n", ident.Config.Name, ident.Config.Type)
 			fmt.Fprintf(cmd.OutOrStdout(), "Device ID: %s\n", ident.Config.DeviceID)
 			fmt.Fprintf(cmd.OutOrStdout(), "Config:    %s\n", cfg)
-			if err := daemon.Start(); err != nil {
+			if err := ensureDaemon(); err != nil {
 				return fmt.Errorf("device initialized, but background receiver failed to start: %w", err)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Background receiver started")
@@ -85,7 +85,7 @@ On the second device, run beam pair --code NNNNNN.`,
 				restartOnExit := true
 				defer func() {
 					if restartOnExit {
-						_ = daemon.Start()
+						_ = ensureDaemon()
 					}
 				}()
 				gen, wait, cancel, err := pairing.Host(ident)
@@ -100,7 +100,7 @@ On the second device, run beam pair --code NNNNNN.`,
 				}
 				cancel()
 				restartOnExit = false
-				if err := daemon.Start(); err != nil {
+				if err := ensureDaemon(); err != nil {
 					return fmt.Errorf("paired, but background receiver failed to restart: %w", err)
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "✓ Paired with %s\n", p.Name)
@@ -110,7 +110,7 @@ On the second device, run beam pair --code NNNNNN.`,
 			if err != nil {
 				return err
 			}
-			if err := daemon.Start(); err != nil {
+			if err := ensureDaemon(); err != nil {
 				return fmt.Errorf("paired, but background receiver failed to start: %w", err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ Paired with %s\n", p.Name)
@@ -203,7 +203,7 @@ func offerQueue(cmd *cobra.Command, path string, target *device.Listed) error {
 		return err
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "✓ Queued %s for %s (%s)\n", entry.Name, target.Name, server.FormatSize(entry.Size))
-	if err := daemon.Start(); err != nil {
+	if err := ensureDaemon(); err != nil {
 		return fmt.Errorf("transfer queued, but background receiver is not running: %w", err)
 	}
 	return nil
@@ -282,9 +282,13 @@ func cmdStart() *cobra.Command {
 				}
 			}
 			if err := daemon.Start(); err != nil {
+				if errors.Is(err, daemon.ErrAlreadyRunning) {
+					fmt.Fprintln(cmd.OutOrStdout(), "BEAM daemon is already running.")
+					return nil
+				}
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "BEAM background receiver is running")
+			fmt.Fprintln(cmd.OutOrStdout(), "BEAM daemon started.")
 			if autostart {
 				fmt.Fprintln(cmd.OutOrStdout(), "Automatic startup enabled")
 			}
@@ -293,6 +297,14 @@ func cmdStart() *cobra.Command {
 	}
 	c.Flags().BoolVar(&autostart, "autostart", false, "start BEAM automatically when you sign in (macOS/Windows)")
 	return c
+}
+
+func ensureDaemon() error {
+	err := daemon.Start()
+	if errors.Is(err, daemon.ErrAlreadyRunning) {
+		return nil
+	}
+	return err
 }
 
 func cmdStop() *cobra.Command {
@@ -309,7 +321,7 @@ func cmdStop() *cobra.Command {
 					return fmt.Errorf("disable automatic startup: %w", err)
 				}
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "BEAM background receiver stopped")
+			fmt.Fprintln(cmd.OutOrStdout(), "BEAM daemon stopped.")
 			if disableAutostart {
 				fmt.Fprintln(cmd.OutOrStdout(), "Automatic startup disabled")
 			}
@@ -330,9 +342,9 @@ func cmdStatus() *cobra.Command {
 				return err
 			}
 			if running {
-				fmt.Fprintf(cmd.OutOrStdout(), "BEAM background receiver is running (PID %d)\n", state.PID)
+				fmt.Fprintf(cmd.OutOrStdout(), "BEAM daemon is running (PID %d).\n", state.PID)
 			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), "BEAM background receiver is stopped")
+				fmt.Fprintln(cmd.OutOrStdout(), "BEAM daemon is stopped.")
 			}
 			entries, err := queue.List()
 			if err == nil {
@@ -345,9 +357,8 @@ func cmdStatus() *cobra.Command {
 
 func cmdDaemon() *cobra.Command {
 	return &cobra.Command{
-		Use:    "daemon",
-		Short:  "Run the background receiver in the foreground",
-		Hidden: true,
+		Use:   "daemon",
+		Short: "Run the daemon in the foreground for debugging",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()

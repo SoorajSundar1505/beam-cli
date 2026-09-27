@@ -145,3 +145,11 @@ func DaemonStopPath() (string, error) {
 	}
 	return filepath.Join(dir, "stop"), nil
 }
+
+func DaemonStartLockPath() (string, error) {
+	dir, err := RuntimeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "start.lock"), nil
+}

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"beam/internal/history"
 )
@@ -16,7 +17,7 @@ type windows struct{}
 func native() Platform { return windows{} }
 
 func (windows) Read() (*Item, error) {
-	out, err := exec.Command("powershell", "-NoProfile", "-Command",
+	out, err := powershell("-NoProfile", "-Command",
 		`Get-Clipboard -Format FileDropList | ForEach-Object { $_.FullName }`).Output()
 	if err == nil {
 		path := strings.TrimSpace(strings.Split(string(out), "\n")[0])
@@ -37,7 +38,7 @@ func (windows) Read() (*Item, error) {
 			return &Item{Kind: kind, Filename: filepath.Base(path), MIME: mime, Data: b}, nil
 		}
 	}
-	out, err = exec.Command("powershell", "-NoProfile", "-Command", "Get-Clipboard -Raw").Output()
+	out, err = powershell("-NoProfile", "-Command", "Get-Clipboard -Raw").Output()
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +54,7 @@ func (windows) Write(it *Item) error {
 		return nil
 	}
 	if it.Kind == history.KindText {
-		cmd := exec.Command("powershell", "-NoProfile", "-Command", "Set-Clipboard -Value $input")
+		cmd := powershell("-NoProfile", "-Command", "Set-Clipboard -Value $input")
 		cmd.Stdin = strings.NewReader(it.Text)
 		return cmd.Run()
 	}
@@ -69,7 +70,13 @@ func (windows) Write(it *Item) error {
 	if err := os.WriteFile(path, it.Data, 0o600); err != nil {
 		return err
 	}
-	cmd := exec.Command("powershell", "-NoProfile", "-Command", "Set-Clipboard -Path $input")
+	cmd := powershell("-NoProfile", "-Command", "Set-Clipboard -Path $input")
 	cmd.Stdin = strings.NewReader(path)
 	return cmd.Run()
+}
+
+func powershell(args ...string) *exec.Cmd {
+	cmd := exec.Command("powershell", args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	return cmd
 }

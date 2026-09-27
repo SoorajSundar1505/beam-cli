@@ -157,6 +157,8 @@ beam stop --disable-autostart
 
 `beam receive` remains available for foreground operation and troubleshooting;
 run `beam stop` first so the foreground receiver can use the listening port.
+For daemon-specific debugging, `beam daemon` runs the same service in the
+foreground and writes errors directly to the terminal.
 
 ### Offline transfers
 
@@ -184,6 +186,7 @@ permissions.
 | `beam start [--autostart]` | Start the background receiver |
 | `beam stop [--disable-autostart]` | Stop the background receiver |
 | `beam status` | Show receiver status and queued transfer count |
+| `beam daemon` | Run the daemon in the foreground for debugging |
 | `beam receive` | Run the receiver in the foreground |
 | `beam clipboard --list` | Local history only |
 | `beam clipboard --search Q` | FTS + substring search |

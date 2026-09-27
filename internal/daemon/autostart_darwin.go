@@ -31,7 +31,6 @@ func EnableAutostart() error {
   <key>Label</key><string>so.beam.cli</string>
   <key>ProgramArguments</key><array><string>%s</string><string>daemon</string></array>
   <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
 </dict></plist>
 `, escaped)
 	if err := os.WriteFile(path, []byte(plist), 0o600); err != nil {
