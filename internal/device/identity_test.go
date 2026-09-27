@@ -19,8 +19,16 @@ func TestInitAndLoad(t *testing.T) {
 	if id.Config.Name != "MacBook" || id.Config.DeviceID == "" {
 		t.Fatalf("bad config %+v", id.Config)
 	}
-	if _, err := Init("other"); err == nil {
-		t.Fatal("expected already initialized")
+	again, created, err := Ensure("other")
+	if err != nil || created {
+		t.Fatalf("existing device: created=%v err=%v", created, err)
+	}
+	if again.Config.Name != "other" || again.Config.DeviceID != id.Config.DeviceID {
+		t.Fatalf("identity changed: %+v", again.Config)
+	}
+	unchanged, created, err := Ensure("")
+	if err != nil || created || unchanged.Config.Name != "other" {
+		t.Fatalf("blank ensure rewrote identity: %+v created=%v err=%v", unchanged, created, err)
 	}
 	loaded, err := Load()
 	if err != nil {

@@ -2,12 +2,14 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 	"time"
 
 	"beam/internal/daemon"
 	"beam/internal/device"
+	"beam/internal/discovery"
 )
 
 func TestInitEnablesAutostartAndStartsDaemon(t *testing.T) {
@@ -68,6 +70,64 @@ func TestStartStopAndAutostartDisable(t *testing.T) {
 	}
 }
 
+func TestDevicesFirstRunIsIdempotent(t *testing.T) {
+	setupCLIDaemonTest(t)
+	var starts int
+	running := false
+	startDaemon = func() error {
+		if running {
+			return daemon.ErrAlreadyRunning
+		}
+		running = true
+		starts++
+		return nil
+	}
+	enableDaemonAutostart = func() error { return nil }
+	browseDevices = func(context.Context) ([]discovery.Remote, error) {
+		return []discovery.Remote{{ID: "peer", Name: "Windows-PC", Type: "windows"}}, nil
+	}
+
+	first, err := execute(t, "devices")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := execute(t, "devices")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if starts != 1 {
+		t.Fatalf("daemon starts = %d, want 1", starts)
+	}
+	ident, err := device.Load()
+	if err != nil || ident.Config.DeviceID == "" {
+		t.Fatalf("identity was not created: %+v %v", ident, err)
+	}
+	for _, output := range []string{first, second} {
+		for _, want := range []string{"BEAM ● ONLINE", "Nearby devices", "1. Windows-PC", "● online"} {
+			if !strings.Contains(output, want) {
+				t.Errorf("output missing %q:\n%s", want, output)
+			}
+		}
+	}
+	if strings.Contains(second, "✓ BEAM is ready") {
+		t.Fatal("repeated command repeated first-run setup")
+	}
+}
+
+func TestRepeatedInitDoesNotError(t *testing.T) {
+	setupCLIDaemonTest(t)
+	if _, err := execute(t, "init", "--name", "MacBook"); err != nil {
+		t.Fatal(err)
+	}
+	output, err := execute(t, "init", "--name", "MacBook")
+	if err != nil {
+		t.Fatalf("repeated init returned error: %v\n%s", err, output)
+	}
+	if strings.Contains(output, "already initialized") {
+		t.Fatalf("repeated init treated existing identity as an error:\n%s", output)
+	}
+}
+
 func TestStatusReporting(t *testing.T) {
 	setupCLIDaemonTest(t)
 	if _, err := device.Init("MacBook"); err != nil {
@@ -77,6 +137,9 @@ func TestStatusReporting(t *testing.T) {
 		return daemon.State{PID: 4242, StartedAt: time.Now(), Heartbeat: time.Now()}, true, nil
 	}
 	daemonAutostartEnabled = func() (bool, error) { return true, nil }
+	browseDevices = func(context.Context) ([]discovery.Remote, error) {
+		return []discovery.Remote{{ID: "peer", Name: "Windows-PC", Type: "windows"}}, nil
+	}
 
 	output, err := execute(t, "status")
 	if err != nil {
@@ -87,6 +150,7 @@ func TestStatusReporting(t *testing.T) {
 		"Device: MacBook",
 		"Daemon: running (PID 4242)",
 		"Autostart: enabled",
+		"Nearby devices: 1",
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("status missing %q:\n%s", want, output)
@@ -117,6 +181,16 @@ func setupCLIDaemonTest(t *testing.T) {
 	oldEnable := enableDaemonAutostart
 	oldDisable := disableDaemonAutostart
 	oldEnabled := daemonAutostartEnabled
+	oldBrowse := browseDevices
+	startDaemon = func() error { return nil }
+	stopDaemon = func() error { return nil }
+	enableDaemonAutostart = func() error { return nil }
+	disableDaemonAutostart = func() error { return nil }
+	daemonAutostartEnabled = func() (bool, error) { return true, nil }
+	daemonStatus = func() (daemon.State, bool, error) {
+		return daemon.State{PID: 1, Heartbeat: time.Now()}, true, nil
+	}
+	browseDevices = func(context.Context) ([]discovery.Remote, error) { return nil, nil }
 	t.Cleanup(func() {
 		startDaemon = oldStart
 		stopDaemon = oldStop
@@ -124,5 +198,6 @@ func setupCLIDaemonTest(t *testing.T) {
 		enableDaemonAutostart = oldEnable
 		disableDaemonAutostart = oldDisable
 		daemonAutostartEnabled = oldEnabled
+		browseDevices = oldBrowse
 	})
 }

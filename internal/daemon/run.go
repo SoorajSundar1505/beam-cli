@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"time"
@@ -19,6 +20,15 @@ import (
 )
 
 func Run(ctx context.Context) error {
+	if state, running, err := Status(); err == nil && running && state.PID != os.Getpid() {
+		log.Printf("BEAM daemon is already running (PID %d)", state.PID)
+		return nil
+	}
+	logFile, err := configureDaemonLog()
+	if err != nil {
+		return err
+	}
+	defer logFile.Close()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stopPath, err := storage.DaemonStopPath()
@@ -61,6 +71,23 @@ func Run(ctx context.Context) error {
 	}
 	log.Printf("BEAM daemon stopped: pid=%d", os.Getpid())
 	return nil
+}
+
+func configureDaemonLog() (*os.File, error) {
+	path, err := storage.DaemonLogPath()
+	if err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	output := io.Writer(file)
+	if info, err := os.Stderr.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
+		output = io.MultiWriter(os.Stderr, file)
+	}
+	log.SetOutput(output)
+	return file, nil
 }
 
 func watchStopRequest(ctx context.Context, cancel context.CancelFunc, path string) {

@@ -113,7 +113,7 @@ func launchBackgroundProcess(logPath string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(exe, "daemon", "--background")
+	cmd := exec.Command(exe, "daemon")
 	cmd.Stdin = nil
 	cmd.Stdout = log
 	cmd.Stderr = log

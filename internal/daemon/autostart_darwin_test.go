@@ -29,8 +29,8 @@ func TestLaunchAgentAutostartEnableDisable(t *testing.T) {
 	if !strings.Contains(plist, "<key>RunAtLoad</key><true/>") {
 		t.Fatal("LaunchAgent does not run at login")
 	}
-	if !strings.Contains(plist, "<string>--background</string>") {
-		t.Fatal("LaunchAgent does not use background logging mode")
+	if !strings.Contains(plist, "<string>daemon</string>") || strings.Contains(plist, "schtasks") {
+		t.Fatal("LaunchAgent does not start one daemon directly")
 	}
 	if strings.Contains(plist, "<key>KeepAlive</key>") {
 		t.Fatal("LaunchAgent must not restart a crashed daemon")

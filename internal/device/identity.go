@@ -65,6 +65,32 @@ func DefaultName() string {
 	return h
 }
 
+// Ensure loads an existing identity, or creates one when this device has not
+// been initialized. A requested name updates only the display name of an
+// existing device and never replaces its keys.
+func Ensure(name string) (*Identity, bool, error) {
+	if ident, err := Load(); err == nil {
+		if name != "" && ident.Config.Name != name {
+			ident.Config.Name = name
+			if err := SaveConfig(ident.Config); err != nil {
+				return nil, false, err
+			}
+		}
+		return ident, false, nil
+	}
+	keyPath, err := storage.KeyPath()
+	if err != nil {
+		return nil, false, err
+	}
+	if _, err := os.Stat(keyPath); err == nil {
+		return nil, false, fmt.Errorf("identity key exists but the device configuration is unreadable")
+	} else if !os.IsNotExist(err) {
+		return nil, false, err
+	}
+	ident, err := Init(name)
+	return ident, true, err
+}
+
 func Init(name string) (*Identity, error) {
 	if name == "" {
 		name = DefaultName()

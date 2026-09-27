@@ -36,6 +36,9 @@ var (
 	enableDaemonAutostart  = daemon.EnableAutostart
 	disableDaemonAutostart = daemon.DisableAutostart
 	daemonAutostartEnabled = daemon.AutostartEnabled
+	browseDevices          = func(ctx context.Context) ([]discovery.Remote, error) {
+		return discovery.Browse(ctx, 2*time.Second)
+	}
 )
 
 func NewRoot() *cobra.Command {
@@ -44,6 +47,9 @@ func NewRoot() *cobra.Command {
 		Short: "Move files and clipboard between your devices on the local network",
 		Long: `BEAM is a CLI-first, local-network tool for sending files and clipboard
 content between your own devices. No cloud. No accounts.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return showDevices(cmd)
+		},
 	}
 	root.AddCommand(
 		cmdInit(), cmdPair(), cmdDevices(), cmdSend(), cmdReceive(), cmdClipboard(),
@@ -58,33 +64,14 @@ func cmdInit() *cobra.Command {
 		Use:   "init",
 		Short: "Create this device's identity and local configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ident, err := device.Init(name)
+			_, created, err := prepareDevice(name)
 			if err != nil {
 				return err
 			}
-			cfg, _ := storage.ConfigDir()
-			fmt.Fprintf(cmd.OutOrStdout(), "Initialized %s (%s)\n", ident.Config.Name, ident.Config.Type)
-			fmt.Fprintf(cmd.OutOrStdout(), "Device ID: %s\n", ident.Config.DeviceID)
-			fmt.Fprintf(cmd.OutOrStdout(), "Config:    %s\n", cfg)
-			autostartReady := true
-			if err := enableDaemonAutostart(); err != nil {
-				if errors.Is(err, daemon.ErrAutostartUnsupported) {
-					autostartReady = false
-				} else {
-					return fmt.Errorf("device initialized, but autostart setup failed: %w", err)
-				}
+			if !created {
+				fmt.Fprintln(cmd.OutOrStdout(), "BEAM is already configured")
 			}
-			if err := ensureDaemon(); err != nil {
-				return fmt.Errorf("device initialized, but background receiver failed to start: %w", err)
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), "✓ BEAM is ready")
-			fmt.Fprintln(cmd.OutOrStdout(), "✓ Background receiver started")
-			if autostartReady {
-				fmt.Fprintln(cmd.OutOrStdout(), "✓ Autostart enabled")
-			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), "• Autostart is unavailable on this platform")
-			}
-			return nil
+			return activate(cmd.OutOrStdout(), true)
 		},
 	}
 	c.Flags().StringVar(&name, "name", "", "device display name (default: hostname)")
@@ -99,7 +86,10 @@ func cmdPair() *cobra.Command {
 		Long: `On the first device, run beam pair and share the 6-digit code.
 On the second device, run beam pair --code NNNNNN.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ident := MustIdent()
+			ident, err := ensureReady(cmd.OutOrStdout())
+			if err != nil {
+				return err
+			}
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			if strings.TrimSpace(code) == "" {
@@ -150,17 +140,7 @@ func cmdDevices() *cobra.Command {
 		Use:   "devices",
 		Short: "List this device and paired peers",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ident := MustIdent()
-			online, err := discovery.Browse(cmd.Context(), 2*time.Second)
-			if err != nil {
-				online = nil
-			}
-			items, err := device.ListDevices(ident, online)
-			if err != nil {
-				return err
-			}
-			fmt.Fprint(cmd.OutOrStdout(), device.FormatTable(items))
-			return nil
+			return showDevices(cmd)
 		},
 	}
 }
@@ -172,7 +152,10 @@ func cmdSend() *cobra.Command {
 		Short: "Send a file to a paired device",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ident := MustIdent()
+			ident, err := ensureReady(cmd.OutOrStdout())
+			if err != nil {
+				return err
+			}
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			items, err := listed(ident)
@@ -248,7 +231,10 @@ func cmdReceive() *cobra.Command {
 		Use:   "receive",
 		Short: "Wait for incoming files and clipboard transfers",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ident := MustIdent()
+			ident, _, err := device.Ensure("")
+			if err != nil {
+				return err
+			}
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			dl, err := storage.DownloadsDir()
@@ -299,7 +285,9 @@ func cmdStart() *cobra.Command {
 		Use:   "start",
 		Short: "Start the background receiver",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_ = MustIdent()
+			if _, _, err := device.Ensure(""); err != nil {
+				return err
+			}
 			if autostart {
 				if err := enableDaemonAutostart(); err != nil {
 					return fmt.Errorf("enable automatic startup: %w", err)
@@ -321,6 +309,100 @@ func cmdStart() *cobra.Command {
 	}
 	c.Flags().BoolVar(&autostart, "autostart", false, "start BEAM automatically when you sign in (macOS/Windows)")
 	return c
+}
+
+func prepareDevice(name string) (*device.Identity, bool, error) {
+	return device.Ensure(name)
+}
+
+func activate(out io.Writer, announce bool) error {
+	autostartReady := true
+	if err := enableDaemonAutostart(); err != nil {
+		if errors.Is(err, daemon.ErrAutostartUnsupported) {
+			autostartReady = false
+		} else {
+			return fmt.Errorf("autostart setup failed: %w", err)
+		}
+	}
+	if err := ensureDaemon(); err != nil {
+		return fmt.Errorf("background receiver failed to start: %w", err)
+	}
+	if announce {
+		fmt.Fprintln(out, "✓ BEAM is ready")
+		fmt.Fprintln(out, "✓ Background receiver started")
+		if autostartReady {
+			fmt.Fprintln(out, "✓ Autostart enabled")
+		} else {
+			fmt.Fprintln(out, "• Autostart is unavailable on this platform")
+		}
+	}
+	return nil
+}
+
+func ensureReady(out io.Writer) (*device.Identity, error) {
+	ident, created, err := prepareDevice("")
+	if err != nil {
+		return nil, err
+	}
+	if err := activate(out, created); err != nil {
+		return nil, err
+	}
+	return ident, nil
+}
+
+func showDevices(cmd *cobra.Command) error {
+	ident, err := ensureReady(cmd.OutOrStdout())
+	if err != nil {
+		return err
+	}
+	_, running, err := daemonStatus()
+	if err != nil {
+		return err
+	}
+	online, err := browseDevices(cmd.Context())
+	if err != nil {
+		online = nil
+	}
+	items, err := device.ListDevices(ident, online)
+	if err != nil {
+		return err
+	}
+	writeDeviceView(cmd.OutOrStdout(), ident, running, items)
+	return nil
+}
+
+func writeDeviceView(out io.Writer, ident *device.Identity, running bool, items []device.Listed) {
+	if running {
+		fmt.Fprintln(out, "BEAM ● ONLINE")
+	} else {
+		fmt.Fprintln(out, "BEAM ○ OFFLINE")
+	}
+	fmt.Fprintf(out, "Device: %s\n\nNearby devices\n", ident.Config.Name)
+	shown := 0
+	for _, item := range items {
+		if item.Self {
+			continue
+		}
+		shown++
+		marker, state := "○", "offline"
+		if strings.HasPrefix(item.Status, "online") {
+			marker, state = "●", "online"
+		}
+		fmt.Fprintf(out, "%d. %-16s %s %s\n", shown, item.Name, marker, state)
+	}
+	if shown == 0 {
+		fmt.Fprintln(out, "(none)")
+	}
+}
+
+func onlineCount(items []device.Listed) int {
+	count := 0
+	for _, item := range items {
+		if !item.Self && strings.HasPrefix(item.Status, "online") {
+			count++
+		}
+	}
+	return count
 }
 
 func ensureDaemon() error {
@@ -365,6 +447,14 @@ func cmdStatus() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			online, err := browseDevices(cmd.Context())
+			if err != nil {
+				online = nil
+			}
+			items, err := device.ListDevices(ident, online)
+			if err != nil {
+				return err
+			}
 			state, running, err := daemonStatus()
 			if err != nil {
 				return err
@@ -389,6 +479,7 @@ func cmdStatus() *cobra.Command {
 			} else {
 				fmt.Fprintln(cmd.OutOrStdout(), "Autostart: disabled")
 			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Nearby devices: %d\n", onlineCount(items))
 			entries, err := queue.List()
 			if err == nil {
 				fmt.Fprintf(cmd.OutOrStdout(), "Queued transfers: %d\n", len(entries))
@@ -442,7 +533,10 @@ func cmdClipboard() *cobra.Command {
 		Use:   "clipboard",
 		Short: "Local clipboard history and copy-to-device",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ident := MustIdent()
+			ident, err := ensureReady(cmd.OutOrStdout())
+			if err != nil {
+				return err
+			}
 			store, err := history.Open()
 			if err != nil {
 				return err
@@ -537,7 +631,7 @@ func resolveCopy(clip *clipboard.Service, store *history.Store, copyID string) (
 }
 
 func listed(ident *device.Identity) ([]device.Listed, error) {
-	online, _ := discovery.Browse(context.Background(), 2*time.Second)
+	online, _ := browseDevices(context.Background())
 	return device.ListDevices(ident, online)
 }
 

@@ -11,19 +11,9 @@ import (
 const createNoWindow = 0x08000000
 
 func detach(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: createNoWindow,
-	}
-}
-
-func hiddenCommand(name string, args ...string) *exec.Cmd {
-	cmd := exec.Command(name, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: createNoWindow,
-	}
-	return cmd
+	// CREATE_NO_WINDOW gives this one daemon process its own non-visible
+	// console lifetime. It is not used to launch any helper executable.
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNoWindow}
 }
 
 func terminate(p *os.Process) error {

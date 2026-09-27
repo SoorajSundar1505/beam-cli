@@ -3,37 +3,55 @@
 package daemon
 
 import (
-	"fmt"
-	"os/exec"
+	"errors"
+
+	"golang.org/x/sys/windows/registry"
 )
+
+const windowsRunKey = `Software\Microsoft\Windows\CurrentVersion\Run`
+const windowsRunValue = "BEAM"
 
 func EnableAutostart() error {
 	exe, err := executablePath()
 	if err != nil {
 		return err
 	}
-	command := fmt.Sprintf(`"%s" daemon --background`, exe)
-	return hiddenCommand(
-		"schtasks", "/Create", "/SC", "ONLOGON", "/TN", "BEAM",
-		"/TR", command, "/RL", "LIMITED", "/F",
-	).Run()
+	key, _, err := registry.CreateKey(registry.CURRENT_USER, windowsRunKey, registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer key.Close()
+	return key.SetStringValue(windowsRunValue, LoginCommand(exe))
 }
 
 func DisableAutostart() error {
-	err := hiddenCommand("schtasks", "/Delete", "/TN", "BEAM", "/F").Run()
-	if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
+	key, err := registry.OpenKey(registry.CURRENT_USER, windowsRunKey, registry.SET_VALUE)
+	if err != nil {
+		if errors.Is(err, registry.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	defer key.Close()
+	err = key.DeleteValue(windowsRunValue)
+	if errors.Is(err, registry.ErrNotExist) {
 		return nil
 	}
 	return err
 }
 
 func AutostartEnabled() (bool, error) {
-	err := hiddenCommand("schtasks", "/Query", "/TN", "BEAM").Run()
-	if err == nil {
-		return true, nil
+	key, err := registry.OpenKey(registry.CURRENT_USER, windowsRunKey, registry.QUERY_VALUE)
+	if err != nil {
+		if errors.Is(err, registry.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
 	}
-	if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
+	defer key.Close()
+	_, _, err = key.GetStringValue(windowsRunValue)
+	if errors.Is(err, registry.ErrNotExist) {
 		return false, nil
 	}
-	return false, err
+	return err == nil, err
 }

@@ -29,7 +29,7 @@ func EnableAutostart() error {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>so.beam.cli</string>
-  <key>ProgramArguments</key><array><string>%s</string><string>daemon</string><string>--background</string></array>
+  <key>ProgramArguments</key><array><string>%s</string><string>daemon</string></array>
   <key>RunAtLoad</key><true/>
 </dict></plist>
 `, escaped)

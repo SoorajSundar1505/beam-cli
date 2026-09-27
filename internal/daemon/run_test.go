@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"net"
+	"os"
 	"strconv"
 	"testing"
 	"time"
@@ -10,8 +12,27 @@ import (
 	"beam/internal/crypto"
 	"beam/internal/device"
 	"beam/internal/protocol"
+	"beam/internal/storage"
 	"beam/internal/transport"
 )
+
+func TestRunExitsWhenAnotherDaemonIsRunning(t *testing.T) {
+	t.Setenv("BEAM_DATA_DIR", t.TempDir())
+	path, err := storage.DaemonStatePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(State{PID: os.Getpid() + 1, StartedAt: time.Now(), Heartbeat: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestStatusReportsForegroundDaemonAndShutdown(t *testing.T) {
 	t.Setenv("BEAM_CONFIG_DIR", t.TempDir())

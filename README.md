@@ -105,15 +105,16 @@ go build -o beam ./cmd/beam
 
 ## Setup
 
-On each computer:
+After installing BEAM, run any normal command. The first one creates the
+device identity, installs per-user login startup, and starts one background
+daemon:
 
 ```bash
-beam init --name MacBook
+beam devices
 ```
 
-This writes the local identity and configuration, installs user-level startup
-on macOS or Windows, and starts the background receiver immediately. No
-administrator privileges are required.
+No administrator privileges, manual `beam init`, or `beam receive` is required.
+Repeating the command does not create another identity or daemon.
 
 ```text
 ✓ BEAM is ready
