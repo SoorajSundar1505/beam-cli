@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"beam/internal/discovery"
 )
@@ -48,8 +49,12 @@ func ListDevices(ident *Identity, online []discovery.Remote) ([]Listed, error) {
 		st := "offline"
 		addr := ""
 		if r, ok := on[p.ID]; ok {
-			st = "online"
 			addr = r.Addr
+			if p.BadEndpoint != "" && p.BadEndpoint == r.Addr {
+				st = "unreachable"
+			} else {
+				st = "online"
+			}
 		}
 		out = append(out, Listed{
 			ID:     p.ID,
@@ -79,28 +84,78 @@ func ListDevices(ident *Identity, online []discovery.Remote) ([]Listed, error) {
 	return out, nil
 }
 
-// syncAdvertisedNames stores the latest mDNS display name for a paired
-// device. The device ID stays the record key, so a rename replaces the
-// label on that one peer and leaves the public key and pairing time alone.
+// syncAdvertisedNames stores the latest mDNS name and endpoint for a paired
+// device. The device ID stays the record key, so a rename or a new address
+// updates that one peer and leaves the public key and pairing time alone.
 func syncAdvertisedNames(selfID string, peers []Peer, online []discovery.Remote) error {
 	index := make(map[string]int, len(peers))
 	for i, peer := range peers {
 		index[peer.ID] = i
 	}
 	changed := false
+	now := time.Now().UTC()
 	for _, remote := range online {
-		name := strings.TrimSpace(remote.Name)
-		if remote.ID == "" || remote.ID == selfID || name == "" {
-			continue
-		}
 		i, ok := index[remote.ID]
-		if !ok || peers[i].Name == name {
+		if !ok || remote.ID == "" || remote.ID == selfID {
 			continue
 		}
-		peers[i].Name = name
-		changed = true
+		name := strings.TrimSpace(remote.Name)
+		if name != "" && peers[i].Name != name {
+			peers[i].Name = name
+			changed = true
+		}
+		if remote.Addr != "" && peers[i].Endpoint != remote.Addr {
+			peers[i].Endpoint = remote.Addr
+			if peers[i].BadEndpoint != "" && peers[i].BadEndpoint != remote.Addr {
+				peers[i].BadEndpoint = ""
+			}
+			changed = true
+		}
+		if peers[i].LastSeen.IsZero() || now.Sub(peers[i].LastSeen) > time.Second {
+			peers[i].LastSeen = now
+			changed = true
+		}
 	}
 	if !changed {
+		return nil
+	}
+	return SavePeers(peers)
+}
+
+// MarkReachable records that a handshake to this endpoint succeeded.
+func MarkReachable(id, endpoint string) error {
+	return noteEndpoint(id, endpoint, true)
+}
+
+// MarkUnreachable forgets an endpoint that could not complete a connection.
+func MarkUnreachable(id, endpoint string) error {
+	return noteEndpoint(id, endpoint, false)
+}
+
+func noteEndpoint(id, endpoint string, reachable bool) error {
+	peers, err := LoadPeers()
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	found := false
+	for i := range peers {
+		if peers[i].ID != id {
+			continue
+		}
+		found = true
+		if reachable {
+			peers[i].Endpoint = endpoint
+			peers[i].LastReachable = now
+			peers[i].BadEndpoint = ""
+		} else if endpoint != "" {
+			peers[i].BadEndpoint = endpoint
+			if peers[i].Endpoint == endpoint {
+				peers[i].Endpoint = ""
+			}
+		}
+	}
+	if !found {
 		return nil
 	}
 	return SavePeers(peers)

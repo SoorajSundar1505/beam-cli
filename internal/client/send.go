@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"beam/internal/clipboard"
 	"beam/internal/device"
@@ -29,6 +30,23 @@ func newID() string {
 	return hex.EncodeToString(b[:])
 }
 
+const maxDialAttempts = 2
+
+const dialTimeout = 4 * time.Second
+
+// UnreachableError is the user-facing result when a paired device cannot be
+// connected. Cause keeps the dial or handshake error for debug output.
+type UnreachableError struct {
+	Name  string
+	Cause error
+}
+
+func (e *UnreachableError) Error() string {
+	return e.Name + " is currently unreachable."
+}
+
+func (e *UnreachableError) Unwrap() error { return e.Cause }
+
 func DialTarget(ctx context.Context, ident *device.Identity, target *device.Listed) (*transport.Conn, error) {
 	if target.Self {
 		return nil, fmt.Errorf("cannot send to this device")
@@ -36,15 +54,50 @@ func DialTarget(ctx context.Context, ident *device.Identity, target *device.List
 	if target.Peer == nil {
 		return nil, fmt.Errorf("device %s is not paired; run beam pair", target.Name)
 	}
-	addr := target.Addr
-	if addr == "" || target.Status == "offline" {
-		r, err := discovery.FindID(ctx, target.ID)
+	return connectPeer(ctx, target, func(ctx context.Context, id string) (string, error) {
+		remote, err := discovery.FindID(ctx, id)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", target.Name, ErrOffline)
+			return "", err
 		}
-		addr = r.Addr
+		return remote.Addr, nil
+	}, func(ctx context.Context, addr string) (*transport.Conn, error) {
+		return server.DialPeer(ctx, ident, target.Peer, addr)
+	})
+}
+
+// connectPeer dials the current endpoint into the existing handshake. A failure
+// drops that address, asks discovery for a newer one, and tries at most once more.
+func connectPeer(ctx context.Context, target *device.Listed, lookup func(context.Context, string) (string, error), dial func(context.Context, string) (*transport.Conn, error)) (*transport.Conn, error) {
+	addr := ""
+	if target.Status != "offline" && target.Status != "unreachable" {
+		addr = target.Addr
 	}
-	return server.DialPeer(ctx, ident, target.Peer, addr)
+	var cause error
+	for attempt := 0; attempt < maxDialAttempts; attempt++ {
+		if attempt > 0 || addr == "" {
+			next, err := lookup(ctx, target.ID)
+			if err == nil && next != "" {
+				addr = next
+			}
+		}
+		if addr == "" {
+			break
+		}
+		dialCtx, cancel := context.WithTimeout(ctx, dialTimeout)
+		conn, err := dial(dialCtx, addr)
+		cancel()
+		if err == nil {
+			_ = device.MarkReachable(target.ID, addr)
+			return conn, nil
+		}
+		cause = err
+		_ = device.MarkUnreachable(target.ID, addr)
+		addr = ""
+	}
+	if cause == nil {
+		return nil, fmt.Errorf("%s: %w", target.Name, ErrOffline)
+	}
+	return nil, &UnreachableError{Name: target.Name, Cause: cause}
 }
 
 func SendFile(ctx context.Context, ident *device.Identity, target *device.Listed, path string, report transfer.Reporter) error {

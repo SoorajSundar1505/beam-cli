@@ -24,6 +24,8 @@ func deviceState(status string) string {
 	switch {
 	case strings.HasPrefix(status, "online"):
 		return "[ONLINE]"
+	case status == "unreachable":
+		return "[UNREACHABLE]"
 	case status == "this device":
 		return "[THIS DEVICE]"
 	default:

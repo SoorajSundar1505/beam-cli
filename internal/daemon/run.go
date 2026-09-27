@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -108,8 +109,11 @@ func watchStopRequest(ctx context.Context, cancel context.CancelFunc, path strin
 	}
 }
 
+var localAddrs = discovery.LocalAddresses
+
 func advertiseLoop(ctx context.Context, ident *device.Identity) {
 	current := advertisement(ident)
+	known := localAddrs()
 	var active *discovery.Advertiser
 	publish := func(info discovery.Info) bool {
 		if active != nil {
@@ -142,20 +146,40 @@ func advertiseLoop(ctx context.Context, ident *device.Identity) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if applyConfiguredName(ident) {
+			nameChanged := applyConfiguredName(ident)
+			addrs := localAddrs()
+			moved := !sameAddressSet(known, addrs)
+			if nameChanged {
 				current = advertisement(ident)
-				if active != nil {
-					active.SetDisplayName(current.Name)
-					continue
-				}
+			}
+			if moved {
+				known = addrs
+			}
+			if moved || active == nil || !healthy {
 				healthy = publish(current)
 				continue
 			}
-			if !healthy {
-				healthy = publish(current)
+			if nameChanged {
+				active.SetDisplayName(current.Name)
 			}
 		}
 	}
+}
+
+func sameAddressSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	left := append([]string(nil), a...)
+	right := append([]string(nil), b...)
+	sort.Strings(left)
+	sort.Strings(right)
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func advertisement(ident *device.Identity) discovery.Info {

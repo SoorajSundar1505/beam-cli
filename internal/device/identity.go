@@ -48,11 +48,15 @@ type Identity struct {
 }
 
 type Peer struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Type      Type      `json:"type"`
-	PublicKey string    `json:"public_key"`
-	PairedAt  time.Time `json:"paired_at"`
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	Type          Type      `json:"type"`
+	PublicKey     string    `json:"public_key"`
+	PairedAt      time.Time `json:"paired_at"`
+	Endpoint      string    `json:"endpoint,omitempty"`
+	LastSeen      time.Time `json:"last_seen,omitempty"`
+	LastReachable time.Time `json:"last_reachable,omitempty"`
+	BadEndpoint   string    `json:"bad_endpoint,omitempty"`
 }
 
 const DefaultPort = 47821

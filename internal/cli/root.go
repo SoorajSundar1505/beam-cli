@@ -21,6 +21,7 @@ import (
 	"beam/internal/daemon"
 	"beam/internal/device"
 	"beam/internal/discovery"
+	"beam/internal/firewall"
 	"beam/internal/history"
 	"beam/internal/pairing"
 	"beam/internal/queue"
@@ -43,6 +44,7 @@ var (
 		return s.ReadCurrent()
 	}
 	sendClipboardItem = client.SendClipboard
+	debugNetwork      bool
 )
 
 func NewRoot() *cobra.Command {
@@ -62,6 +64,7 @@ content between your own devices. No cloud. No accounts.`,
 			return showDevices(cmd)
 		},
 	}
+	root.PersistentFlags().BoolVar(&debugNetwork, "debug", false, "Show underlying network errors")
 	root.AddCommand(
 		cmdInit(), cmdPair(), cmdDevices(), cmdSend(), cmdReceive(), cmdClipboard(),
 		cmdStart(), cmdStop(), cmdStatus(), cmdDaemon(),
@@ -84,6 +87,7 @@ func cmdInit() *cobra.Command {
 			} else if err := enableFirstRunAutostart(cmd.OutOrStdout(), true); err != nil {
 				return err
 			}
+			allowFirewall(cmd.OutOrStdout())
 			if err := ensureDaemon(); err != nil {
 				return fmt.Errorf("background receiver failed to start: %w", err)
 			}
@@ -206,9 +210,7 @@ func cmdSend() *cobra.Command {
 				if errors.Is(err, client.ErrOffline) {
 					return offerQueue(cmd, path, target)
 				}
-				fmt.Fprintln(cmd.OutOrStdout())
-				failed(cmd.OutOrStdout(), "Transfer failed: "+err.Error())
-				return err
+				return reportTransfer(cmd, err)
 			}
 			ok(cmd.OutOrStdout(), "Transfer complete")
 			return nil
@@ -365,6 +367,7 @@ func ensureReady(out io.Writer) (*device.Identity, error) {
 			return nil, err
 		}
 	}
+	allowFirewall(out)
 	if err := ensureDaemon(); err != nil {
 		return nil, fmt.Errorf("background receiver failed to start: %w", err)
 	}
@@ -406,6 +409,34 @@ func ensureDaemon() error {
 	if errors.Is(err, daemon.ErrAlreadyRunning) {
 		return nil
 	}
+	return err
+}
+
+func allowFirewall(out io.Writer) {
+	err := firewall.Ensure(device.DefaultPort)
+	if !errors.Is(err, firewall.ErrNeedsElevation) {
+		return
+	}
+	fmt.Fprintln(out, "Windows needs permission once so other devices on your network can connect to BEAM.")
+	if err := firewall.Elevate(device.DefaultPort); err != nil {
+		_ = firewall.RememberAsked()
+	}
+	_ = firewall.Ensure(device.DefaultPort)
+}
+
+func reportTransfer(cmd *cobra.Command, err error) error {
+	var down *client.UnreachableError
+	if errors.As(err, &down) {
+		fmt.Fprintln(cmd.OutOrStdout())
+		failed(cmd.OutOrStdout(), "Transfer failed: "+down.Error())
+		if debugNetwork && down.Cause != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), down.Cause)
+		}
+		cmd.SilenceErrors = true
+		return err
+	}
+	fmt.Fprintln(cmd.OutOrStdout())
+	failed(cmd.OutOrStdout(), "Transfer failed: "+err.Error())
 	return err
 }
 
@@ -628,7 +659,7 @@ func copyTo(cmd *cobra.Command, ident *device.Identity, clip *clipboard.Service,
 	defer stop()
 	fmt.Fprintf(cmd.OutOrStdout(), "Sending clipboard -> %s\n", target.Name)
 	if err := sendClipboardItem(ctx, ident, target, it, nil); err != nil {
-		return err
+		return reportTransfer(cmd, err)
 	}
 	ok(cmd.OutOrStdout(), "Copied to "+target.Name+" clipboard")
 	return nil
@@ -643,7 +674,7 @@ func sendCurrentClipboard(cmd *cobra.Command, ident *device.Identity, clip *clip
 	defer stop()
 	fmt.Fprintf(cmd.OutOrStdout(), "Sending clipboard -> %s\n", target.Name)
 	if err := sendClipboardItem(ctx, ident, target, item, nil); err != nil {
-		return err
+		return reportTransfer(cmd, err)
 	}
 	ok(cmd.OutOrStdout(), "Clipboard sent")
 	return nil
