@@ -3,5 +3,12 @@
 *.exe
 *.test
 *.out
+
+*.db
+*.sqlite
+*.sqlite3
+.env
+
 .DS_Store
+
 dist/
