@@ -5,32 +5,34 @@ package main
 import (
 	"os"
 	"syscall"
-)
-
-const (
-	stdOutputHandle = ^uintptr(10) // -11
-	stdErrorHandle  = ^uintptr(11) // -12
+	"unsafe"
 )
 
 func init() {
-	kernel := syscall.NewLazyDLL("kernel32.dll")
-	result, _, _ := kernel.NewProc("AttachConsole").Call(^uintptr(0))
-	if result == 0 {
-		return
-	}
-	getHandle := kernel.NewProc("GetStdHandle")
-	if file := standardHandle(getHandle, stdOutputHandle, "stdout"); file != nil {
-		os.Stdout = file
-	}
-	if file := standardHandle(getHandle, stdErrorHandle, "stderr"); file != nil {
-		os.Stderr = file
+	// The release binary is a console-subsystem executable, so CMD and
+	// PowerShell wait for it and stdout is connected before main runs.
+	// Do not call AttachConsole: that joins a parent console and lets a
+	// background daemon keep the caller's console after the CLI exits.
+	if shouldDetachConsole(os.Args, consoleProcessCount()) {
+		hideAndFreeConsole()
 	}
 }
 
-func standardHandle(get *syscall.LazyProc, kind uintptr, name string) *os.File {
-	handle, _, _ := get.Call(kind)
-	if handle == 0 || handle == ^uintptr(0) {
-		return nil
+func consoleProcessCount() int {
+	kernel := syscall.NewLazyDLL("kernel32.dll")
+	proc := kernel.NewProc("GetConsoleProcessList")
+	var processes [32]uint32
+	count, _, _ := proc.Call(uintptr(unsafe.Pointer(&processes[0])), uintptr(len(processes)))
+	return int(count)
+}
+
+func hideAndFreeConsole() {
+	kernel := syscall.NewLazyDLL("kernel32.dll")
+	user := syscall.NewLazyDLL("user32.dll")
+	window, _, _ := kernel.NewProc("GetConsoleWindow").Call()
+	if window != 0 {
+		const swHide = 0
+		user.NewProc("ShowWindow").Call(window, swHide)
 	}
-	return os.NewFile(handle, name)
+	kernel.NewProc("FreeConsole").Call()
 }

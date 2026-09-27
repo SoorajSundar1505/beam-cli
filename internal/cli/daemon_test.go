@@ -103,7 +103,7 @@ func TestDevicesFirstRunIsIdempotent(t *testing.T) {
 		t.Fatalf("identity was not created: %+v %v", ident, err)
 	}
 	for _, output := range []string{first, second} {
-		for _, want := range []string{"BEAM [ONLINE]", "Nearby devices", "1. Windows-PC", "[ONLINE]"} {
+		for _, want := range []string{"Nearby", "1. Windows-PC", "[ONLINE]"} {
 			if !strings.Contains(output, want) {
 				t.Errorf("output missing %q:\n%s", want, output)
 			}
@@ -146,15 +146,26 @@ func TestStatusReporting(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"BEAM [ONLINE]",
-		"Device: MacBook",
-		"Daemon: running (PID 4242)",
-		"Autostart: enabled",
-		"1. Windows-PC",
-		"[ONLINE]",
+		"BEAM [ONLINE]  MacBook",
+		"daemon: running | autostart: on",
+		"Nearby",
+		"1. Windows-PC  [ONLINE]",
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("status missing %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "4242") || strings.Contains(output, "Queued") || strings.Contains(output, "pid:") {
+		t.Fatalf("normal status includes diagnostics:\n%s", output)
+	}
+
+	verbose, err := execute(t, "status", "--verbose")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"pid: 4242", "queued: 0", "device id:", "config:", "log:"} {
+		if !strings.Contains(verbose, want) {
+			t.Errorf("verbose status missing %q:\n%s", want, verbose)
 		}
 	}
 }

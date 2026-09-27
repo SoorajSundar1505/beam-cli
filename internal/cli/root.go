@@ -362,10 +362,6 @@ func showDevices(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	_, running, err := daemonStatus()
-	if err != nil {
-		return err
-	}
 	online, err := browseDevices(cmd.Context())
 	if err != nil {
 		online = nil
@@ -374,7 +370,7 @@ func showDevices(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	renderDevices(cmd.OutOrStdout(), running, ident.Config.Name, nil, items)
+	renderNearby(cmd.OutOrStdout(), items)
 	return nil
 }
 
@@ -412,7 +408,8 @@ func cmdStop() *cobra.Command {
 }
 
 func cmdStatus() *cobra.Command {
-	return &cobra.Command{
+	var verbose bool
+	c := &cobra.Command{
 		Use:   "status",
 		Short: "Show background receiver status",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -436,24 +433,47 @@ func cmdStatus() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("check autostart status: %w", err)
 			}
-			details := []string{}
-			if running {
-				details = append(details, fmt.Sprintf("Daemon: running (PID %d)", state.PID))
-			} else {
-				details = append(details, "Daemon: stopped")
+			var extra []string
+			if verbose {
+				extra = statusDiagnostics(ident, state, running)
 			}
-			if autostart {
-				details = append(details, "Autostart: enabled")
-			} else {
-				details = append(details, "Autostart: disabled")
-			}
-			if entries, err := queue.List(); err == nil {
-				details = append(details, fmt.Sprintf("Queued transfers: %d", len(entries)))
-			}
-			renderDevices(cmd.OutOrStdout(), running, ident.Config.Name, details, items)
+			renderStatus(cmd.OutOrStdout(), running, ident.Config.Name, autostart, items, extra)
 			return nil
 		},
 	}
+	c.Flags().BoolVar(&verbose, "verbose", false, "include PID, queue count, and local paths")
+	return c
+}
+
+func statusDiagnostics(ident *device.Identity, state daemon.State, running bool) []string {
+	lines := []string{}
+	if running && state.PID > 0 {
+		lines = append(lines, fmt.Sprintf("pid: %d", state.PID))
+	} else {
+		lines = append(lines, "pid: none")
+	}
+	if entries, err := queue.List(); err == nil {
+		lines = append(lines, fmt.Sprintf("queued: %d", len(entries)))
+	}
+	if ident != nil {
+		lines = append(lines, "device id: "+ident.Config.DeviceID)
+	}
+	for _, item := range []struct {
+		label string
+		path  func() (string, error)
+	}{
+		{"config", storage.ConfigDir},
+		{"data", storage.DataDir},
+		{"downloads", storage.DownloadsDir},
+		{"log", storage.DaemonLogPath},
+	} {
+		path, err := item.path()
+		if err != nil || path == "" {
+			continue
+		}
+		lines = append(lines, item.label+": "+path)
+	}
+	return lines
 }
 
 func cmdDaemon() *cobra.Command {

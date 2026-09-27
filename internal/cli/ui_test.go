@@ -15,18 +15,19 @@ func TestDeviceColumnsUseTheSameLayout(t *testing.T) {
 		{Name: "Work-Mac", Status: "online"},
 	}
 	var out bytes.Buffer
-	renderDevices(&out, true, "Windows-PC", nil, items)
+	renderNearby(&out, items)
 	text := out.String()
 	for _, want := range []string{
-		"BEAM [ONLINE]",
-		"Device: Windows-PC",
-		"Nearby devices",
+		"Nearby\n",
 		"1. MacBook   [OFFLINE]",
 		"2. Work-Mac  [ONLINE]",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "BEAM") || strings.Contains(text, "daemon:") {
+		t.Fatalf("device list includes status chrome:\n%s", text)
 	}
 	if strings.Contains(text, "this device") || strings.Contains(text, "*") || strings.Contains(text, " o ") {
 		t.Fatalf("nearby list uses a status marker outside the shared labels:\n%s", text)
@@ -52,25 +53,32 @@ func TestDeviceColumnsUseTheSameLayout(t *testing.T) {
 	}
 }
 
-func TestStatusAndDevicesShareLabels(t *testing.T) {
+func TestStatusIsCompact(t *testing.T) {
 	items := []device.Listed{
-		{Name: "Windows-PC", Status: "this device", Self: true},
-		{Name: "MacBook", Status: "offline"},
+		{Name: "MacBook", Status: "this device", Self: true},
+		{Name: "Windows-PC", Status: "online"},
 	}
-	var devices, status bytes.Buffer
-	renderDevices(&devices, true, "Windows-PC", nil, items)
-	renderDevices(&status, true, "Windows-PC", []string{
-		"Daemon: running (PID 19096)",
-		"Autostart: enabled",
-		"Queued transfers: 0",
-	}, items)
-	for _, text := range []string{devices.String(), status.String()} {
-		if !strings.Contains(text, "BEAM [ONLINE]") || !strings.Contains(text, "1. MacBook  [OFFLINE]") {
-			t.Fatalf("layout drifted:\n%s", text)
+	var out bytes.Buffer
+	renderStatus(&out, true, "MacBook", true, items, nil)
+	text := out.String()
+	want := "BEAM [ONLINE]  MacBook\ndaemon: running | autostart: on\n\nNearby\n1. Windows-PC  [ONLINE]\n"
+	if text != want {
+		t.Fatalf("status layout:\n%q", text)
+	}
+	if strings.Contains(text, "PID") || strings.Contains(text, "Queued") || strings.Contains(text, "pid:") {
+		t.Fatalf("normal status includes diagnostics:\n%s", text)
+	}
+}
+
+func TestStatusVerboseKeepsDiagnostics(t *testing.T) {
+	items := []device.Listed{{Name: "MacBook", Status: "this device", Self: true}}
+	var out bytes.Buffer
+	renderStatus(&out, true, "MacBook", true, items, []string{"pid: 17910", "queued: 0", "log: /tmp/beam.log"})
+	text := out.String()
+	for _, want := range []string{"BEAM [ONLINE]  MacBook", "daemon: running | autostart: on", "pid: 17910", "queued: 0", "log: /tmp/beam.log"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("verbose status missing %q\n%s", want, text)
 		}
-	}
-	if !strings.Contains(status.String(), "Daemon: running (PID 19096)") {
-		t.Fatalf("status details missing:\n%s", status.String())
 	}
 }
 

@@ -31,20 +31,36 @@ func deviceState(status string) string {
 	}
 }
 
-func renderDevices(out io.Writer, running bool, name string, details []string, items []device.Listed) {
-	fmt.Fprintln(out, headline(out, running))
-	fmt.Fprintf(out, "Device: %s\n", name)
-	for _, detail := range details {
-		fmt.Fprintln(out, detail)
-	}
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Nearby devices")
+func renderNearby(out io.Writer, items []device.Listed) {
+	fmt.Fprintln(out, "Nearby")
 	text := formatListed(items, true)
 	if text == "" {
 		fmt.Fprintln(out, "(none)")
 		return
 	}
 	fmt.Fprint(out, text)
+}
+
+func renderStatus(out io.Writer, running bool, name string, autostart bool, items []device.Listed, verbose []string) {
+	fmt.Fprintf(out, "%s  %s\n", headline(out, running), name)
+	daemon := "stopped"
+	if running {
+		daemon = "running"
+	}
+	auto := "off"
+	if autostart {
+		auto = "on"
+	}
+	fmt.Fprintf(out, "daemon: %s | autostart: %s\n", daemon, auto)
+	fmt.Fprintln(out)
+	renderNearby(out, items)
+	if len(verbose) == 0 {
+		return
+	}
+	fmt.Fprintln(out)
+	for _, line := range verbose {
+		fmt.Fprintln(out, line)
+	}
 }
 
 func renderChoices(out io.Writer, items []device.Listed) {

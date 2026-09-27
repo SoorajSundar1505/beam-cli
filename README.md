@@ -195,11 +195,12 @@ permissions.
 | `beam init` | Create identity, enable autostart, and start the receiver |
 | `beam pair` | Host pairing (prints code) |
 | `beam pair --code NNNNNN` | Join pairing |
-| `beam devices` | This device + paired peers (online/offline) |
+| `beam devices` | Nearby devices |
 | `beam send FILE [--to NAME]` | Stream a file (any type) |
 | `beam start [--autostart]` | Start the background receiver |
 | `beam stop [--disable-autostart]` | Stop the background receiver |
-| `beam status` | Show receiver status and queued transfer count |
+| `beam status` | Compact receiver status |
+| `beam status --verbose` | Status plus PID, queue count, and paths |
 | `beam daemon` | Run the daemon in the foreground for debugging |
 | `beam receive` | Run the receiver in the foreground |
 | `beam clipboard --list` | Local history only |
