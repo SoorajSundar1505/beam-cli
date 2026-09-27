@@ -53,6 +53,10 @@ jobs:
             beam-linux-amd64 \
             > checksums.txt
 
+          # Homebrew, Scoop, and WinGet files are updated by hand after this
+          # release exists. packaging/refresh.py reads checksums.txt and does
+          # not push to those repositories.
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:

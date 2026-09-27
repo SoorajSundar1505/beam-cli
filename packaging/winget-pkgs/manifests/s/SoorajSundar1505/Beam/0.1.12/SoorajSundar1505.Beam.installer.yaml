@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
+
+PackageIdentifier: SoorajSundar1505.Beam
+PackageVersion: 0.1.12
+InstallerType: portable
+Commands:
+  - beam
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/SoorajSundar1505/beam-cli/releases/download/v0.1.12/beam-windows-amd64.exe
+    InstallerSha256: 3EF8F39024476171472B40B81628E1387AF64905E8DC02F6D2D02871DF1AD374
+ManifestType: installer
+ManifestVersion: 1.12.0

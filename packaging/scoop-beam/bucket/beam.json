@@ -1,0 +1,28 @@
+{
+    "version": "0.1.12",
+    "description": "Local-network file and clipboard transfer",
+    "homepage": "https://github.com/SoorajSundar1505/beam-cli",
+    "license": "Unknown",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/SoorajSundar1505/beam-cli/releases/download/v0.1.12/beam-windows-amd64.exe",
+            "hash": "3ef8f39024476171472b40b81628e1387af64905e8dc02f6d2d02871df1ad374"
+        }
+    },
+    "pre_install": "Rename-Item \"$dir\\beam-windows-amd64.exe\" 'beam.exe'",
+    "bin": "beam.exe",
+    "checkver": {
+        "github": "https://github.com/SoorajSundar1505/beam-cli"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/SoorajSundar1505/beam-cli/releases/download/v$version/beam-windows-amd64.exe"
+            }
+        },
+        "hash": {
+            "url": "https://github.com/SoorajSundar1505/beam-cli/releases/download/v$version/checksums.txt",
+            "regex": "$sha256\\s+beam-windows-amd64\\.exe"
+        }
+    }
+}

@@ -41,8 +41,34 @@ Offer/Accept/Data/Done framing. Details: [PROTOCOL.md](PROTOCOL.md).
 
 ## Install
 
+### Package managers
+
+macOS:
+
+```bash
+brew tap SoorajSundar1505/beam
+brew install beam
+```
+
+Windows with Scoop:
+
+```powershell
+scoop bucket add beam https://github.com/SoorajSundar1505/scoop-beam
+scoop install beam
+```
+
+Windows with WinGet, once the official package has been published:
+
+```powershell
+winget install SoorajSundar1505.Beam
+```
+
+After installation, `beam`, `beam devices`, and `beam send FILE --to DEVICE` are on your `PATH`.
+
+### GitHub Release
+
 Download `checksums.txt` and the binary for your platform from the latest
-[GitHub Release](../../releases/latest).
+[GitHub Release](https://github.com/SoorajSundar1505/beam-cli/releases/latest).
 
 ### macOS
 
