@@ -37,7 +37,21 @@ func TestFromEntry(t *testing.T) {
 	e.Text = []string{"id=abc", "name=MacBook", "type=mac", "proto=1", "pair=1"}
 	e.AddrIPv4 = nil
 	r, ok := fromEntry(e)
-	if !ok || r.ID != "abc" || r.Name != "MacBook" || r.Type != "mac" || !r.Pair || r.Port != 47821 {
+	if !ok || r.ID != "abc" || r.Name != "MacBook" || r.Type != "mac" || !r.Pair || r.Port != 47821 || r.Instance != "MacBook" {
 		t.Fatalf("%+v %v", r, ok)
+	}
+}
+
+func TestRenameKeepsOneAdvertisement(t *testing.T) {
+	stale := Remote{ID: "X", Name: "Windows-PC", Instance: "Windows-PC", TTL: 3200}
+	fresh := Remote{ID: "X", Name: "Suraj-Windows", Instance: "X", TTL: 3200}
+	for _, got := range []Remote{keepRemote(stale, fresh), keepRemote(fresh, stale)} {
+		if got.Name != "Suraj-Windows" || got.ID != "X" {
+			t.Fatalf("kept %+v", got)
+		}
+	}
+	older := keepRemote(fresh, Remote{ID: "X", Name: "Windows-PC", Instance: "Windows-PC", TTL: 100})
+	if older.Name != "Suraj-Windows" {
+		t.Fatalf("stale record replaced the current name: %+v", older)
 	}
 }

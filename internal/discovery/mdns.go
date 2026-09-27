@@ -16,17 +16,21 @@ import (
 )
 
 type Remote struct {
-	ID   string
-	Name string
-	Type string
-	Host string
-	Port int
-	Pair bool
-	Addr string
+	ID       string
+	Name     string
+	Type     string
+	Host     string
+	Port     int
+	Pair     bool
+	Addr     string
+	Instance string
+	TTL      uint32
 }
 
 type Advertiser struct {
-	server *zeroconf.Server
+	server  *zeroconf.Server
+	info    Info
+	pairing bool
 }
 
 type Info struct {
@@ -37,6 +41,39 @@ type Info struct {
 }
 
 func Advertise(info Info, pairing bool) (*Advertiser, error) {
+	instance := info.ID
+	if instance == "" {
+		instance = info.Name
+	}
+	s, err := zeroconf.Register(instance, protocol.ServiceType, protocol.Domain, info.Port, txtRecords(info, pairing), nil)
+	if err != nil {
+		return nil, err
+	}
+	return &Advertiser{server: s, info: info, pairing: pairing}, nil
+}
+
+func (a *Advertiser) Close() {
+	if a != nil && a.server != nil {
+		a.server.Shutdown()
+	}
+}
+
+// SetDisplayName updates the advertised label without changing the service
+// instance. The instance stays the device ID, so a rename cannot leave a
+// second peer record on the network.
+func (a *Advertiser) SetDisplayName(name string) {
+	if a == nil || a.server == nil {
+		return
+	}
+	name = strings.TrimSpace(name)
+	if name == "" || name == a.info.Name {
+		return
+	}
+	a.info.Name = name
+	a.server.SetText(txtRecords(a.info, a.pairing))
+}
+
+func txtRecords(info Info, pairing bool) []string {
 	txt := []string{
 		"id=" + info.ID,
 		"name=" + info.Name,
@@ -46,17 +83,7 @@ func Advertise(info Info, pairing bool) (*Advertiser, error) {
 	if pairing {
 		txt = append(txt, "pair=1")
 	}
-	s, err := zeroconf.Register(info.Name, protocol.ServiceType, protocol.Domain, info.Port, txt, nil)
-	if err != nil {
-		return nil, err
-	}
-	return &Advertiser{server: s}, nil
-}
-
-func (a *Advertiser) Close() {
-	if a != nil && a.server != nil {
-		a.server.Shutdown()
-	}
+	return txt
 }
 
 // LocalAddresses returns active, non-loopback addresses that mDNS may
@@ -119,6 +146,9 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Remote, error) {
 				continue
 			}
 			mu.Lock()
+			if existing, ok := byID[r.ID]; ok {
+				r = keepRemote(existing, r)
+			}
 			byID[r.ID] = r
 			mu.Unlock()
 		}
@@ -157,14 +187,41 @@ func fromEntry(e *zeroconf.ServiceEntry) (Remote, bool) {
 		host = strings.TrimSuffix(e.HostName, ".")
 	}
 	return Remote{
-		ID:   id,
-		Name: name,
-		Type: txt["type"],
-		Host: host,
-		Port: port,
-		Pair: txt["pair"] == "1",
-		Addr: net.JoinHostPort(host, strconv.Itoa(port)),
+		ID:       id,
+		Name:     name,
+		Type:     txt["type"],
+		Host:     host,
+		Port:     port,
+		Pair:     txt["pair"] == "1",
+		Addr:     net.JoinHostPort(host, strconv.Itoa(port)),
+		Instance: e.Instance,
+		TTL:      e.TTL,
 	}, true
+}
+
+// keepRemote chooses which advertisement represents one device ID.
+// A registration whose instance is the device ID is the current daemon.
+// An older registration that used the display name as its instance loses,
+// so a cached "Windows-PC" record cannot keep that label after a rename.
+func keepRemote(current, next Remote) Remote {
+	if current.ID == "" {
+		return next
+	}
+	currentStable := current.Instance != "" && current.Instance == current.ID
+	nextStable := next.Instance != "" && next.Instance == next.ID
+	if nextStable != currentStable {
+		if nextStable {
+			return next
+		}
+		return current
+	}
+	if next.TTL > current.TTL {
+		return next
+	}
+	if next.TTL == current.TTL && next.Name != "" {
+		return next
+	}
+	return current
 }
 
 func pickAddr(e *zeroconf.ServiceEntry) string {

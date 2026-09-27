@@ -144,6 +144,10 @@ func advertiseLoop(ctx context.Context, ident *device.Identity) {
 		case <-ticker.C:
 			if applyConfiguredName(ident) {
 				current = advertisement(ident)
+				if active != nil {
+					active.SetDisplayName(current.Name)
+					continue
+				}
 				healthy = publish(current)
 				continue
 			}
