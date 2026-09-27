@@ -51,6 +51,13 @@ func NewRoot() *cobra.Command {
 		Short: "Move files and clipboard between your devices on the local network",
 		Long: `BEAM is a CLI-first, local-network tool for sending files and clipboard
 content between your own devices. No cloud. No accounts.`,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if !wakesDaemon(cmd) {
+				return nil
+			}
+			_, err := ensureReady(cmd.OutOrStdout())
+			return err
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return showDevices(cmd)
 		},
@@ -74,8 +81,17 @@ func cmdInit() *cobra.Command {
 			}
 			if !created {
 				fmt.Fprintln(cmd.OutOrStdout(), "BEAM is already configured")
+			} else if err := enableFirstRunAutostart(cmd.OutOrStdout(), true); err != nil {
+				return err
 			}
-			return activate(cmd.OutOrStdout(), true)
+			if err := ensureDaemon(); err != nil {
+				return fmt.Errorf("background receiver failed to start: %w", err)
+			}
+			if created {
+				ok(cmd.OutOrStdout(), "BEAM is ready")
+				ok(cmd.OutOrStdout(), "Background receiver started")
+			}
+			return nil
 		},
 	}
 	c.Flags().StringVar(&name, "name", "", "device display name (default: hostname)")
@@ -322,26 +338,19 @@ func prepareDevice(name string) (*device.Identity, bool, error) {
 	return device.Ensure(name)
 }
 
-func activate(out io.Writer, announce bool) error {
-	autostartReady := true
-	if err := enableDaemonAutostart(); err != nil {
-		if errors.Is(err, daemon.ErrAutostartUnsupported) {
-			autostartReady = false
-		} else {
-			return fmt.Errorf("autostart setup failed: %w", err)
-		}
-	}
-	if err := ensureDaemon(); err != nil {
-		return fmt.Errorf("background receiver failed to start: %w", err)
-	}
-	if announce {
-		ok(out, "BEAM is ready")
-		ok(out, "Background receiver started")
-		if autostartReady {
-			ok(out, "Autostart enabled")
-		} else {
+func enableFirstRunAutostart(out io.Writer, announce bool) error {
+	err := enableDaemonAutostart()
+	if errors.Is(err, daemon.ErrAutostartUnsupported) {
+		if announce {
 			ok(out, "Autostart is unavailable on this platform")
 		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("autostart setup failed: %w", err)
+	}
+	if announce {
+		ok(out, "Autostart enabled")
 	}
 	return nil
 }
@@ -351,10 +360,24 @@ func ensureReady(out io.Writer) (*device.Identity, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := activate(out, created); err != nil {
-		return nil, err
+	if created {
+		if err := enableFirstRunAutostart(out, false); err != nil {
+			return nil, err
+		}
+	}
+	if err := ensureDaemon(); err != nil {
+		return nil, fmt.Errorf("background receiver failed to start: %w", err)
 	}
 	return ident, nil
+}
+
+func wakesDaemon(cmd *cobra.Command) bool {
+	switch cmd.Name() {
+	case "stop", "start", "daemon", "receive", "init", "help", "completion":
+		return false
+	default:
+		return true
+	}
 }
 
 func showDevices(cmd *cobra.Command) error {
@@ -370,7 +393,11 @@ func showDevices(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	renderNearby(cmd.OutOrStdout(), items)
+	_, running, err := daemonStatus()
+	if err != nil {
+		return err
+	}
+	renderDeviceList(cmd.OutOrStdout(), running, ident.Config.Name, items)
 	return nil
 }
 
@@ -413,7 +440,7 @@ func cmdStatus() *cobra.Command {
 		Use:   "status",
 		Short: "Show background receiver status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ident, err := device.Load()
+			ident, err := ensureReady(cmd.OutOrStdout())
 			if err != nil {
 				return err
 			}

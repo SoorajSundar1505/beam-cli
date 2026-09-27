@@ -10,43 +10,39 @@ import (
 
 func TestDeviceColumnsUseTheSameLayout(t *testing.T) {
 	items := []device.Listed{
-		{Name: "Windows-PC", Status: "this device", Self: true},
-		{Name: "MacBook", Status: "offline"},
-		{Name: "Work-Mac", Status: "online"},
+		{Name: "MacBook", Status: "this device", Self: true},
+		{Name: "Windows-PC", Status: "online"},
+		{Name: "Work-Mac", Status: "offline"},
 	}
 	var out bytes.Buffer
-	renderNearby(&out, items)
+	renderDeviceList(&out, true, "MacBook", items)
 	text := out.String()
-	for _, want := range []string{
-		"Nearby\n",
-		"1. MacBook   [OFFLINE]",
-		"2. Work-Mac  [ONLINE]",
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("missing %q\n%s", want, text)
-		}
+	want := "" +
+		"BEAM [ONLINE]  MacBook\n\n" +
+		"Devices\n\n" +
+		"1. MacBook     [THIS DEVICE]\n" +
+		"2. Windows-PC  [ONLINE]\n" +
+		"3. Work-Mac    [OFFLINE]\n"
+	if text != want {
+		t.Fatalf("device layout:\n%q", text)
 	}
-	if strings.Contains(text, "BEAM") || strings.Contains(text, "daemon:") {
-		t.Fatalf("device list includes status chrome:\n%s", text)
-	}
-	if strings.Contains(text, "this device") || strings.Contains(text, "*") || strings.Contains(text, " o ") {
-		t.Fatalf("nearby list uses a status marker outside the shared labels:\n%s", text)
+	if strings.Count(text, "MacBook") != 2 || strings.Count(text, "[THIS DEVICE]") != 1 {
+		t.Fatalf("current device was duplicated or omitted:\n%s", text)
 	}
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
-	var mac, work string
+	var mac, windows, work string
 	for _, line := range lines {
 		switch {
-		case strings.Contains(line, "MacBook"):
+		case strings.Contains(line, "1. MacBook"):
 			mac = line
+		case strings.Contains(line, "Windows-PC"):
+			windows = line
 		case strings.Contains(line, "Work-Mac"):
 			work = line
 		}
 	}
-	if mac == "" || work == "" {
-		t.Fatalf("device rows missing:\n%s", text)
-	}
-	if strings.Index(mac, "[") != strings.Index(work, "[") {
-		t.Fatalf("status columns are not aligned:\n%s\n%s", mac, work)
+	if strings.Index(mac, "[") != strings.Index(windows, "[") || strings.Index(mac, "[") != strings.Index(work, "[") {
+		t.Fatalf("status columns are not aligned:\n%s\n%s\n%s", mac, windows, work)
 	}
 	if strings.ContainsAny(text, "●○✓✗█░→*") {
 		t.Fatalf("output contains unreliable symbols:\n%s", text)
@@ -61,7 +57,12 @@ func TestStatusIsCompact(t *testing.T) {
 	var out bytes.Buffer
 	renderStatus(&out, true, "MacBook", true, items, nil)
 	text := out.String()
-	want := "BEAM [ONLINE]  MacBook\ndaemon: running | autostart: on\n\nNearby\n1. Windows-PC  [ONLINE]\n"
+	want := "" +
+		"BEAM [ONLINE]  MacBook\n" +
+		"daemon: running | autostart: on\n\n" +
+		"Devices\n\n" +
+		"1. MacBook     [THIS DEVICE]\n" +
+		"2. Windows-PC  [ONLINE]\n"
 	if text != want {
 		t.Fatalf("status layout:\n%q", text)
 	}
