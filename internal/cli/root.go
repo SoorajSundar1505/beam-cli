@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strconv"
@@ -14,10 +17,12 @@ import (
 
 	"beam/internal/client"
 	"beam/internal/clipboard"
+	"beam/internal/daemon"
 	"beam/internal/device"
 	"beam/internal/discovery"
 	"beam/internal/history"
 	"beam/internal/pairing"
+	"beam/internal/queue"
 	"beam/internal/server"
 	"beam/internal/storage"
 	"beam/internal/transfer"
@@ -30,7 +35,10 @@ func NewRoot() *cobra.Command {
 		Long: `BEAM is a CLI-first, local-network tool for sending files and clipboard
 content between your own devices. No cloud. No accounts.`,
 	}
-	root.AddCommand(cmdInit(), cmdPair(), cmdDevices(), cmdSend(), cmdReceive(), cmdClipboard())
+	root.AddCommand(
+		cmdInit(), cmdPair(), cmdDevices(), cmdSend(), cmdReceive(), cmdClipboard(),
+		cmdStart(), cmdStop(), cmdStatus(), cmdDaemon(),
+	)
 	return root
 }
 
@@ -48,6 +56,10 @@ func cmdInit() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "Initialized %s (%s)\n", ident.Config.Name, ident.Config.Type)
 			fmt.Fprintf(cmd.OutOrStdout(), "Device ID: %s\n", ident.Config.DeviceID)
 			fmt.Fprintf(cmd.OutOrStdout(), "Config:    %s\n", cfg)
+			if err := daemon.Start(); err != nil {
+				return fmt.Errorf("device initialized, but background receiver failed to start: %w", err)
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "Background receiver started")
 			return nil
 		},
 	}
@@ -67,6 +79,15 @@ On the second device, run beam pair --code NNNNNN.`,
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			if strings.TrimSpace(code) == "" {
+				if err := daemon.Stop(); err != nil {
+					return fmt.Errorf("pause background receiver for pairing: %w", err)
+				}
+				restartOnExit := true
+				defer func() {
+					if restartOnExit {
+						_ = daemon.Start()
+					}
+				}()
 				gen, wait, cancel, err := pairing.Host(ident)
 				if err != nil {
 					return err
@@ -77,12 +98,20 @@ On the second device, run beam pair --code NNNNNN.`,
 				if err != nil {
 					return err
 				}
+				cancel()
+				restartOnExit = false
+				if err := daemon.Start(); err != nil {
+					return fmt.Errorf("paired, but background receiver failed to restart: %w", err)
+				}
 				fmt.Fprintf(cmd.OutOrStdout(), "✓ Paired with %s\n", p.Name)
 				return nil
 			}
 			p, err := pairing.Join(ctx, ident, strings.TrimSpace(code), nil)
 			if err != nil {
 				return err
+			}
+			if err := daemon.Start(); err != nil {
+				return fmt.Errorf("paired, but background receiver failed to start: %w", err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ Paired with %s\n", p.Name)
 			return nil
@@ -131,6 +160,9 @@ func cmdSend() *cobra.Command {
 				return err
 			}
 			path := args[0]
+			if target.Status == "offline" {
+				return offerQueue(cmd, path, target)
+			}
 			title := fmt.Sprintf("Sending %s → %s", path, target.Name)
 			fmt.Fprintln(cmd.OutOrStdout(), title)
 			fmt.Fprintln(cmd.OutOrStdout())
@@ -143,6 +175,9 @@ func cmdSend() *cobra.Command {
 				PrintProgress(cmd.OutOrStdout(), title, p)
 			})
 			if err != nil {
+				if errors.Is(err, client.ErrOffline) {
+					return offerQueue(cmd, path, target)
+				}
 				fmt.Fprintf(cmd.OutOrStdout(), "\n✗ Transfer failed: %v\n", err)
 				return err
 			}
@@ -152,6 +187,36 @@ func cmdSend() *cobra.Command {
 	}
 	c.Flags().StringVar(&to, "to", "", "device name, id, or list number")
 	return c
+}
+
+func offerQueue(cmd *cobra.Command, path string, target *device.Listed) error {
+	fmt.Fprintf(cmd.OutOrStdout(), "%s is offline\n", target.Name)
+	if !confirm(cmd.InOrStdin(), cmd.OutOrStdout(), "Queue transfer? [Y/n] ") {
+		fmt.Fprintln(cmd.OutOrStdout(), "Transfer not queued.")
+		return nil
+	}
+	if target.Peer == nil {
+		return fmt.Errorf("device %s is not paired", target.Name)
+	}
+	entry, err := queue.EnqueueFile(path, target.ID, target.Name)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "✓ Queued %s for %s (%s)\n", entry.Name, target.Name, server.FormatSize(entry.Size))
+	if err := daemon.Start(); err != nil {
+		return fmt.Errorf("transfer queued, but background receiver is not running: %w", err)
+	}
+	return nil
+}
+
+func confirm(in io.Reader, out io.Writer, prompt string) bool {
+	fmt.Fprint(out, prompt)
+	sc := bufio.NewScanner(in)
+	if !sc.Scan() {
+		return true
+	}
+	answer := strings.ToLower(strings.TrimSpace(sc.Text()))
+	return answer == "" || answer == "y" || answer == "yes"
 }
 
 func cmdReceive() *cobra.Command {
@@ -200,6 +265,93 @@ func cmdReceive() *cobra.Command {
 					fmt.Fprintln(cmd.ErrOrStderr(), s)
 				},
 			})
+		},
+	}
+}
+
+func cmdStart() *cobra.Command {
+	var autostart bool
+	c := &cobra.Command{
+		Use:   "start",
+		Short: "Start the background receiver",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_ = MustIdent()
+			if autostart {
+				if err := daemon.EnableAutostart(); err != nil {
+					return fmt.Errorf("enable automatic startup: %w", err)
+				}
+			}
+			if err := daemon.Start(); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "BEAM background receiver is running")
+			if autostart {
+				fmt.Fprintln(cmd.OutOrStdout(), "Automatic startup enabled")
+			}
+			return nil
+		},
+	}
+	c.Flags().BoolVar(&autostart, "autostart", false, "start BEAM automatically when you sign in (macOS/Windows)")
+	return c
+}
+
+func cmdStop() *cobra.Command {
+	var disableAutostart bool
+	c := &cobra.Command{
+		Use:   "stop",
+		Short: "Stop the background receiver",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := daemon.Stop(); err != nil {
+				return err
+			}
+			if disableAutostart {
+				if err := daemon.DisableAutostart(); err != nil {
+					return fmt.Errorf("disable automatic startup: %w", err)
+				}
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "BEAM background receiver stopped")
+			if disableAutostart {
+				fmt.Fprintln(cmd.OutOrStdout(), "Automatic startup disabled")
+			}
+			return nil
+		},
+	}
+	c.Flags().BoolVar(&disableAutostart, "disable-autostart", false, "disable startup at sign-in")
+	return c
+}
+
+func cmdStatus() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show background receiver status",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			state, running, err := daemon.Status()
+			if err != nil {
+				return err
+			}
+			if running {
+				fmt.Fprintf(cmd.OutOrStdout(), "BEAM background receiver is running (PID %d)\n", state.PID)
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), "BEAM background receiver is stopped")
+			}
+			entries, err := queue.List()
+			if err == nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "Queued transfers: %d\n", len(entries))
+			}
+			return nil
+		},
+	}
+}
+
+func cmdDaemon() *cobra.Command {
+	return &cobra.Command{
+		Use:    "daemon",
+		Short:  "Run the background receiver in the foreground",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			return daemon.Run(ctx)
 		},
 	}
 }

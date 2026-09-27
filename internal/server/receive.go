@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"beam/internal/clipboard"
@@ -32,6 +33,7 @@ type Options struct {
 	Log       func(string)
 	Out       io.Writer
 	In        io.Reader
+	Ready     func()
 }
 
 func Serve(ctx context.Context, opt Options) error {
@@ -39,28 +41,48 @@ func Serve(ctx context.Context, opt Options) error {
 	if err != nil {
 		return err
 	}
+	if opt.Ready != nil {
+		opt.Ready()
+	}
 	go func() {
 		<-ctx.Done()
 		_ = ln.Close()
 	}()
+	var active sync.WaitGroup
 	for {
 		raw, err := ln.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
+				active.Wait()
 				return nil
 			}
 			return err
 		}
+		active.Add(1)
 		go func(raw net.Conn) {
+			defer active.Done()
 			defer raw.Close()
-			if err := HandleConn(raw, opt); err != nil && opt.Log != nil {
+			done := make(chan struct{})
+			go func() {
+				select {
+				case <-ctx.Done():
+					_ = raw.Close()
+				case <-done:
+				}
+			}()
+			if err := HandleConnContext(ctx, raw, opt); err != nil && ctx.Err() == nil && opt.Log != nil {
 				opt.Log(err.Error())
 			}
+			close(done)
 		}(raw)
 	}
 }
 
 func HandleConn(raw net.Conn, opt Options) error {
+	return HandleConnContext(context.Background(), raw, opt)
+}
+
+func HandleConnContext(ctx context.Context, raw net.Conn, opt Options) error {
 	c, err := transport.HandshakeResponder(raw, opt.Ident, protocol.ModeData, "", func(id string) (*device.Peer, error) {
 		return device.PeerByID(id)
 	})
@@ -71,7 +93,7 @@ func HandleConn(raw net.Conn, opt Options) error {
 	if c.Remote.Mode != protocol.ModeData {
 		return fmt.Errorf("rejected non-data session")
 	}
-	return handleData(context.Background(), c, opt)
+	return handleData(ctx, c, opt)
 }
 
 func handleData(ctx context.Context, c *transport.Conn, opt Options) error {

@@ -10,8 +10,8 @@ iPhone client; this tree does not fake iOS support.
 beam init
 beam pair
 beam devices
+beam status
 beam send photo.jpg --to windows
-beam receive
 beam clipboard --list
 beam clipboard --search "meeting"
 beam clipboard --copy 1 --to windows
@@ -133,14 +133,44 @@ The code is mixed into session key derivation. It is not sent in plaintext.
 
 ### Stay reachable
 
-The other device must advertise on the LAN:
+`beam init` starts a lightweight background receiver. It advertises the device
+on the LAN and accepts authenticated file and clipboard transfers, so you do
+not need to keep a terminal open.
 
 ```bash
-beam receive
+beam status
+beam stop
+beam start
 ```
 
-That command listens for **files and clipboard**, snapshots local clipboard
-into history, and advertises via mDNS.
+To start BEAM automatically when you sign in on macOS or Windows:
+
+```bash
+beam start --autostart
+```
+
+Disable sign-in startup while stopping the receiver:
+
+```bash
+beam stop --disable-autostart
+```
+
+`beam receive` remains available for foreground operation and troubleshooting;
+run `beam stop` first so the foreground receiver can use the listening port.
+
+### Offline transfers
+
+If a paired device is offline, BEAM can queue a private local copy:
+
+```text
+Windows-PC is offline
+Queue transfer? [Y/n]
+✓ Queued report.pdf for Windows-PC (2 MB)
+```
+
+The background receiver retries queued files and removes each spool copy after
+successful delivery. Queue files remain local and are stored with user-only
+permissions.
 
 ## Commands
 
@@ -151,7 +181,10 @@ into history, and advertises via mDNS.
 | `beam pair --code NNNNNN` | Join pairing |
 | `beam devices` | This device + paired peers (online/offline) |
 | `beam send FILE [--to NAME]` | Stream a file (any type) |
-| `beam receive` | Accept inbound transfers |
+| `beam start [--autostart]` | Start the background receiver |
+| `beam stop [--disable-autostart]` | Stop the background receiver |
+| `beam status` | Show receiver status and queued transfer count |
+| `beam receive` | Run the receiver in the foreground |
 | `beam clipboard --list` | Local history only |
 | `beam clipboard --search Q` | FTS + substring search |
 | `beam clipboard --copy N --to NAME` | Send history item N (1 = newest) |

@@ -103,3 +103,45 @@ func BlobDir() (string, error) {
 	b := filepath.Join(dir, "clipboard-blobs")
 	return b, os.MkdirAll(b, 0o700)
 }
+
+func RuntimeDir() (string, error) {
+	dir, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	r := filepath.Join(dir, "runtime")
+	return r, os.MkdirAll(r, 0o700)
+}
+
+func QueueDir() (string, error) {
+	dir, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	q := filepath.Join(dir, "queue")
+	return q, os.MkdirAll(q, 0o700)
+}
+
+func DaemonStatePath() (string, error) {
+	dir, err := RuntimeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "daemon.json"), nil
+}
+
+func DaemonLogPath() (string, error) {
+	dir, err := RuntimeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "daemon.log"), nil
+}
+
+func DaemonStopPath() (string, error) {
+	dir, err := RuntimeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "stop"), nil
+}

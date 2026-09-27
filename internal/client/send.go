@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +20,8 @@ import (
 	"beam/internal/transfer"
 	"beam/internal/transport"
 )
+
+var ErrOffline = errors.New("device is offline")
 
 func newID() string {
 	var b [16]byte
@@ -37,7 +40,7 @@ func DialTarget(ctx context.Context, ident *device.Identity, target *device.List
 	if addr == "" || target.Status == "offline" {
 		r, err := discovery.FindID(ctx, target.ID)
 		if err != nil {
-			return nil, fmt.Errorf("device %s is offline", target.Name)
+			return nil, fmt.Errorf("%s: %w", target.Name, ErrOffline)
 		}
 		addr = r.Addr
 	}
@@ -45,6 +48,10 @@ func DialTarget(ctx context.Context, ident *device.Identity, target *device.List
 }
 
 func SendFile(ctx context.Context, ident *device.Identity, target *device.Listed, path string, report transfer.Reporter) error {
+	return SendFileAs(ctx, ident, target, path, filepath.Base(path), report)
+}
+
+func SendFileAs(ctx context.Context, ident *device.Identity, target *device.Listed, path, offeredName string, report transfer.Reporter) error {
 	st, err := os.Stat(path)
 	if err != nil {
 		return err
@@ -52,7 +59,7 @@ func SendFile(ctx context.Context, ident *device.Identity, target *device.Listed
 	if st.IsDir() {
 		return fmt.Errorf("directories are not supported in Phase 1")
 	}
-	name, err := protocol.SafeFileName(filepath.Base(path))
+	name, err := protocol.SafeFileName(offeredName)
 	if err != nil {
 		return err
 	}
