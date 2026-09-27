@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"beam/internal/client"
@@ -108,28 +109,73 @@ func watchStopRequest(ctx context.Context, cancel context.CancelFunc, path strin
 }
 
 func advertiseLoop(ctx context.Context, ident *device.Identity) {
-	for {
-		adv, err := discovery.Advertise(discovery.Info{
-			ID: ident.Config.DeviceID, Name: ident.Config.Name,
-			Type: string(ident.Config.Type), Port: ident.Config.ListenPort,
-		}, false)
-		if err == nil {
-			log.Printf(
-				"mDNS advertising: service=%s device=%q addresses=%v port=%d",
-				protocol.ServiceType, ident.Config.Name,
-				discovery.LocalAddresses(), ident.Config.ListenPort,
-			)
-			<-ctx.Done()
-			adv.Close()
-			return
+	current := advertisement(ident)
+	var active *discovery.Advertiser
+	publish := func(info discovery.Info) bool {
+		if active != nil {
+			active.Close()
+			active = nil
 		}
-		log.Printf("mDNS advertisement unavailable; retrying: %v", err)
+		next, err := discovery.Advertise(info, false)
+		if err != nil {
+			log.Printf("mDNS advertisement unavailable; retrying: %v", err)
+			return false
+		}
+		active = next
+		log.Printf(
+			"mDNS advertising: service=%s device=%q addresses=%v port=%d",
+			protocol.ServiceType, info.Name,
+			discovery.LocalAddresses(), info.Port,
+		)
+		return true
+	}
+	healthy := publish(current)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	defer func() {
+		if active != nil {
+			active.Close()
+		}
+	}()
+	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(10 * time.Second):
+		case <-ticker.C:
+			if applyConfiguredName(ident) {
+				current = advertisement(ident)
+				healthy = publish(current)
+				continue
+			}
+			if !healthy {
+				healthy = publish(current)
+			}
 		}
 	}
+}
+
+func advertisement(ident *device.Identity) discovery.Info {
+	return discovery.Info{
+		ID:   ident.Config.DeviceID,
+		Name: ident.Config.Name,
+		Type: string(ident.Config.Type),
+		Port: ident.Config.ListenPort,
+	}
+}
+
+// applyConfiguredName copies a display-name edit from disk onto the running
+// daemon. The keypair and device ID are left untouched.
+func applyConfiguredName(ident *device.Identity) bool {
+	loaded, err := device.Load()
+	if err != nil || loaded.Config.DeviceID != ident.Config.DeviceID {
+		return false
+	}
+	name := strings.TrimSpace(loaded.Config.Name)
+	if name == "" || name == ident.Config.Name {
+		return false
+	}
+	ident.Config.Name = name
+	return true
 }
 
 func watchClipboard(ctx context.Context, clip *clipboard.Service) {

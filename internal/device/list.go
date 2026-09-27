@@ -28,6 +28,9 @@ func ListDevices(ident *Identity, online []discovery.Remote) ([]Listed, error) {
 	for _, r := range online {
 		on[r.ID] = r
 	}
+	if err := syncAdvertisedNames(ident.Config.DeviceID, peers, online); err != nil {
+		return nil, err
+	}
 	var out []Listed
 	out = append(out, Listed{
 		ID:     ident.Config.DeviceID,
@@ -74,6 +77,33 @@ func ListDevices(ident *Identity, online []discovery.Remote) ([]Listed, error) {
 		out[i].Index = i + 1
 	}
 	return out, nil
+}
+
+// syncAdvertisedNames stores the latest mDNS display name for a paired
+// device. The device ID stays the record key, so a rename replaces the
+// label on that one peer and leaves the public key and pairing time alone.
+func syncAdvertisedNames(selfID string, peers []Peer, online []discovery.Remote) error {
+	index := make(map[string]int, len(peers))
+	for i, peer := range peers {
+		index[peer.ID] = i
+	}
+	changed := false
+	for _, remote := range online {
+		name := strings.TrimSpace(remote.Name)
+		if remote.ID == "" || remote.ID == selfID || name == "" {
+			continue
+		}
+		i, ok := index[remote.ID]
+		if !ok || peers[i].Name == name {
+			continue
+		}
+		peers[i].Name = name
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return SavePeers(peers)
 }
 
 func peerPtr(p Peer) *Peer {
