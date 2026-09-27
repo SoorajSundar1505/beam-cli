@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Test, build, and release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build release binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
+            go build -trimpath -o dist/beam-darwin-arm64 ./cmd/beam
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 \
+            go build -trimpath -o dist/beam-darwin-amd64 ./cmd/beam
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
+            go build -trimpath -o dist/beam-windows-amd64.exe ./cmd/beam
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -trimpath -o dist/beam-linux-amd64 ./cmd/beam
+
+      - name: Generate SHA-256 checksums
+        working-directory: dist
+        run: |
+          sha256sum \
+            beam-darwin-arm64 \
+            beam-darwin-amd64 \
+            beam-windows-amd64.exe \
+            beam-linux-amd64 \
+            > checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: BEAM ${{ github.ref_name }}
+          generate_release_notes: true
+          body: |
+            Prebuilt BEAM CLI binaries for macOS, Windows, and Linux.
+
+            Download the binary for your platform and verify it with `checksums.txt`.
+            BEAM transfers files directly over your local network—no cloud or account required.
+          files: |
+            dist/beam-darwin-arm64
+            dist/beam-darwin-amd64
+            dist/beam-windows-amd64.exe
+            dist/beam-linux-amd64
+            dist/checksums.txt
+          fail_on_unmatched_files: true

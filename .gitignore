@@ -1,0 +1,7 @@
+/beam
+/beam.exe
+*.exe
+*.test
+*.out
+.DS_Store
+dist/
