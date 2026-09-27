@@ -117,9 +117,9 @@ No administrator privileges, manual `beam init`, or `beam receive` is required.
 Repeating the command does not create another identity or daemon.
 
 ```text
-✓ BEAM is ready
-✓ Background receiver started
-✓ Autostart enabled
+ok BEAM is ready
+ok Background receiver started
+ok Autostart enabled
 ```
 
 ### Pair
@@ -181,7 +181,7 @@ If a paired device is offline, BEAM can queue a private local copy:
 ```text
 Windows-PC is offline
 Queue transfer? [Y/n]
-✓ Queued report.pdf for Windows-PC (2 MB)
+ok Queued report.pdf for Windows-PC (2 MB)
 ```
 
 The background receiver retries queued files and removes each spool copy after
@@ -203,7 +203,8 @@ permissions.
 | `beam daemon` | Run the daemon in the foreground for debugging |
 | `beam receive` | Run the receiver in the foreground |
 | `beam clipboard --list` | Local history only |
-| `beam clipboard --search Q` | FTS + substring search |
+| `beam clipboard --search Q` | Substring search |
+| `beam clipboard --to NAME` | Send the current system clipboard |
 | `beam clipboard --copy N --to NAME` | Send history item N (1 = newest) |
 | `beam clipboard --copy "text" --to NAME` | Send literal text |
 

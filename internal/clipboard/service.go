@@ -49,6 +49,20 @@ func New(p Platform, store *history.Store) *Service {
 	return &Service{p: p, store: store}
 }
 
+func (s *Service) ReadCurrent() (*Item, error) {
+	if s == nil || s.p == nil {
+		return nil, fmt.Errorf("clipboard is not available on this platform")
+	}
+	item, err := s.p.Read()
+	if err != nil {
+		return nil, err
+	}
+	if item == nil || (item.Kind == history.KindText && strings.TrimSpace(item.Text) == "" && len(item.Data) == 0) {
+		return nil, fmt.Errorf("clipboard is empty")
+	}
+	return item, nil
+}
+
 func (s *Service) persist(it *Item) (*history.Item, error) {
 	rec := history.Item{
 		Kind:      it.Kind,

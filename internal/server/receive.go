@@ -140,19 +140,19 @@ func receiveFile(ctx context.Context, c *transport.Conn, opt Options, from strin
 	if !ok {
 		_ = c.SendJSON(protocol.MsgReject, protocol.IDMsg{ID: offer.ID, Reason: "declined"})
 		if opt.Out != nil {
-			fmt.Fprintln(opt.Out, "Declined.")
+			fmt.Fprintln(opt.Out, "Declined")
 		}
 		return nil
 	}
 	path, err := transfer.ReceiveToFile(ctx, c, offer, opt.Downloads, opt.Progress)
 	if err != nil {
 		if opt.Out != nil {
-			fmt.Fprintf(opt.Out, "✗ Transfer failed: %v\n", err)
+			fmt.Fprintf(opt.Out, "x Transfer failed: %v\n", err)
 		}
 		return err
 	}
 	if opt.Out != nil {
-		fmt.Fprintf(opt.Out, "✓ Saved to %s\n", path)
+		fmt.Fprintf(opt.Out, "ok Saved to %s\n", path)
 	}
 	return nil
 }
@@ -199,7 +199,7 @@ func receiveClipboard(ctx context.Context, c *transport.Conn, opt Options, from 
 		}
 	}
 	if opt.Out != nil {
-		fmt.Fprintf(opt.Out, "✓ Copied to %s clipboard (from %s).\n", opt.Ident.Config.Name, from)
+		fmt.Fprintf(opt.Out, "ok Copied to %s clipboard (from %s)\n", opt.Ident.Config.Name, from)
 	}
 	return nil
 }

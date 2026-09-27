@@ -39,6 +39,10 @@ var (
 	browseDevices          = func(ctx context.Context) ([]discovery.Remote, error) {
 		return discovery.Browse(ctx, 2*time.Second)
 	}
+	currentClipboard = func(s *clipboard.Service) (*clipboard.Item, error) {
+		return s.ReadCurrent()
+	}
+	sendClipboardItem = client.SendClipboard
 )
 
 func NewRoot() *cobra.Command {
@@ -117,7 +121,7 @@ On the second device, run beam pair --code NNNNNN.`,
 				if err := ensureDaemon(); err != nil {
 					return fmt.Errorf("paired, but background receiver failed to restart: %w", err)
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "✓ Paired with %s\n", p.Name)
+				ok(cmd.OutOrStdout(), "Paired with "+p.Name)
 				return nil
 			}
 			p, err := pairing.Join(ctx, ident, strings.TrimSpace(code), nil)
@@ -127,7 +131,7 @@ On the second device, run beam pair --code NNNNNN.`,
 			if err := ensureDaemon(); err != nil {
 				return fmt.Errorf("paired, but background receiver failed to start: %w", err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ Paired with %s\n", p.Name)
+			ok(cmd.OutOrStdout(), "Paired with "+p.Name)
 			return nil
 		},
 	}
@@ -170,25 +174,27 @@ func cmdSend() *cobra.Command {
 			if target.Status == "offline" {
 				return offerQueue(cmd, path, target)
 			}
-			title := fmt.Sprintf("Sending %s → %s", path, target.Name)
+			title := fmt.Sprintf("Sending %s -> %s", path, target.Name)
 			fmt.Fprintln(cmd.OutOrStdout(), title)
 			fmt.Fprintln(cmd.OutOrStdout())
+			var view progressView
 			last := time.Now()
 			err = client.SendFile(ctx, ident, target, path, func(p transfer.Progress) {
 				if time.Since(last) < 200*time.Millisecond && !p.Done && p.Err == nil {
 					return
 				}
 				last = time.Now()
-				PrintProgress(cmd.OutOrStdout(), title, p)
+				view.Render(cmd.OutOrStdout(), title, p)
 			})
 			if err != nil {
 				if errors.Is(err, client.ErrOffline) {
 					return offerQueue(cmd, path, target)
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "\n✗ Transfer failed: %v\n", err)
+				fmt.Fprintln(cmd.OutOrStdout())
+				failed(cmd.OutOrStdout(), "Transfer failed: "+err.Error())
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "\n✓ Transfer complete")
+			ok(cmd.OutOrStdout(), "Transfer complete")
 			return nil
 		},
 	}
@@ -209,7 +215,7 @@ func offerQueue(cmd *cobra.Command, path string, target *device.Listed) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "✓ Queued %s for %s (%s)\n", entry.Name, target.Name, server.FormatSize(entry.Size))
+	ok(cmd.OutOrStdout(), fmt.Sprintf("Queued %s for %s (%s)", entry.Name, target.Name, server.FormatSize(entry.Size)))
 	if err := ensureDaemon(); err != nil {
 		return fmt.Errorf("transfer queued, but background receiver is not running: %w", err)
 	}
@@ -261,6 +267,7 @@ func cmdReceive() *cobra.Command {
 			defer adv.Close()
 
 			fmt.Fprintln(cmd.OutOrStdout(), "Waiting for incoming files...")
+			var view progressView
 			return server.Serve(ctx, server.Options{
 				Ident:     ident,
 				Downloads: dl,
@@ -269,7 +276,7 @@ func cmdReceive() *cobra.Command {
 				Out:       cmd.OutOrStdout(),
 				In:        cmd.InOrStdin(),
 				Progress: func(p transfer.Progress) {
-					PrintProgress(cmd.OutOrStdout(), "Receiving "+p.Name, p)
+					view.Render(cmd.OutOrStdout(), "Receiving "+p.Name, p)
 				},
 				Log: func(s string) {
 					fmt.Fprintln(cmd.ErrOrStderr(), s)
@@ -328,12 +335,12 @@ func activate(out io.Writer, announce bool) error {
 		return fmt.Errorf("background receiver failed to start: %w", err)
 	}
 	if announce {
-		fmt.Fprintln(out, "✓ BEAM is ready")
-		fmt.Fprintln(out, "✓ Background receiver started")
+		ok(out, "BEAM is ready")
+		ok(out, "Background receiver started")
 		if autostartReady {
-			fmt.Fprintln(out, "✓ Autostart enabled")
+			ok(out, "Autostart enabled")
 		} else {
-			fmt.Fprintln(out, "• Autostart is unavailable on this platform")
+			ok(out, "Autostart is unavailable on this platform")
 		}
 	}
 	return nil
@@ -367,42 +374,8 @@ func showDevices(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	writeDeviceView(cmd.OutOrStdout(), ident, running, items)
+	renderDevices(cmd.OutOrStdout(), running, ident.Config.Name, nil, items)
 	return nil
-}
-
-func writeDeviceView(out io.Writer, ident *device.Identity, running bool, items []device.Listed) {
-	if running {
-		fmt.Fprintln(out, "BEAM ● ONLINE")
-	} else {
-		fmt.Fprintln(out, "BEAM ○ OFFLINE")
-	}
-	fmt.Fprintf(out, "Device: %s\n\nNearby devices\n", ident.Config.Name)
-	shown := 0
-	for _, item := range items {
-		if item.Self {
-			continue
-		}
-		shown++
-		marker, state := "○", "offline"
-		if strings.HasPrefix(item.Status, "online") {
-			marker, state = "●", "online"
-		}
-		fmt.Fprintf(out, "%d. %-16s %s %s\n", shown, item.Name, marker, state)
-	}
-	if shown == 0 {
-		fmt.Fprintln(out, "(none)")
-	}
-}
-
-func onlineCount(items []device.Listed) int {
-	count := 0
-	for _, item := range items {
-		if !item.Self && strings.HasPrefix(item.Status, "online") {
-			count++
-		}
-	}
-	return count
 }
 
 func ensureDaemon() error {
@@ -463,27 +436,21 @@ func cmdStatus() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("check autostart status: %w", err)
 			}
+			details := []string{}
 			if running {
-				fmt.Fprintln(cmd.OutOrStdout(), "BEAM ● ONLINE")
+				details = append(details, fmt.Sprintf("Daemon: running (PID %d)", state.PID))
 			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), "BEAM ○ OFFLINE")
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Device: %s\n", ident.Config.Name)
-			if running {
-				fmt.Fprintf(cmd.OutOrStdout(), "Daemon: running (PID %d)\n", state.PID)
-			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), "Daemon: stopped")
+				details = append(details, "Daemon: stopped")
 			}
 			if autostart {
-				fmt.Fprintln(cmd.OutOrStdout(), "Autostart: enabled")
+				details = append(details, "Autostart: enabled")
 			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), "Autostart: disabled")
+				details = append(details, "Autostart: disabled")
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Nearby devices: %d\n", onlineCount(items))
-			entries, err := queue.List()
-			if err == nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "Queued transfers: %d\n", len(entries))
+			if entries, err := queue.List(); err == nil {
+				details = append(details, fmt.Sprintf("Queued transfers: %d", len(entries)))
 			}
+			renderDevices(cmd.OutOrStdout(), running, ident.Config.Name, details, items)
 			return nil
 		},
 	}
@@ -543,26 +510,14 @@ func cmdClipboard() *cobra.Command {
 			}
 			defer store.Close()
 			clip := clipboard.New(clipboard.NewNative(), store)
-			_, _ = clip.Snapshot()
+			liveSend := strings.TrimSpace(to) != "" && copyID == "" && search == "" && !list
+			if !liveSend {
+				_, _ = clip.Snapshot()
+			}
 
 			switch {
 			case copyID != "":
-				if to == "" {
-					items, err := listed(ident)
-					if err != nil {
-						return err
-					}
-					target, err := SelectDevice(cmd.InOrStdin(), cmd.OutOrStdout(), items)
-					if err != nil {
-						return err
-					}
-					return copyTo(cmd, ident, clip, store, copyID, target)
-				}
-				items, err := listed(ident)
-				if err != nil {
-					return err
-				}
-				target, err := device.ResolveTarget(to, items)
+				target, err := targetForClipboard(cmd, ident, to)
 				if err != nil {
 					return err
 				}
@@ -574,6 +529,19 @@ func cmdClipboard() *cobra.Command {
 				}
 				printClip(cmd, items)
 				return nil
+			case list:
+				items, err := store.List(50)
+				if err != nil {
+					return err
+				}
+				printClip(cmd, items)
+				return nil
+			case strings.TrimSpace(to) != "":
+				target, err := targetForClipboard(cmd, ident, to)
+				if err != nil {
+					return err
+				}
+				return sendCurrentClipboard(cmd, ident, clip, target)
 			default:
 				items, err := store.List(50)
 				if err != nil {
@@ -587,7 +555,7 @@ func cmdClipboard() *cobra.Command {
 	c.Flags().BoolVar(&list, "list", false, "show local clipboard history")
 	c.Flags().StringVar(&search, "search", "", "search clipboard history")
 	c.Flags().StringVar(&copyID, "copy", "", "history index or literal text to send")
-	c.Flags().StringVar(&to, "to", "", "target device for --copy")
+	c.Flags().StringVar(&to, "to", "", "target device; without --copy, sends the current clipboard")
 	_ = list
 	return c
 }
@@ -597,9 +565,11 @@ func printClip(cmd *cobra.Command, items []history.Item) {
 		fmt.Fprintln(cmd.OutOrStdout(), "(no clipboard history)")
 		return
 	}
-	for i, it := range items {
-		fmt.Fprintf(cmd.OutOrStdout(), "%d  %-22s  %s\n", i+1, clipboard.Preview(it), RelTime(it.CreatedAt))
+	rows := make([]row, len(items))
+	for i, item := range items {
+		rows[i] = row{number: i + 1, name: clipboard.Preview(item), state: RelTime(item.CreatedAt)}
 	}
+	fmt.Fprint(cmd.OutOrStdout(), formatClipboard(rows))
 }
 
 func copyTo(cmd *cobra.Command, ident *device.Identity, clip *clipboard.Service, store *history.Store, copyID string, target *device.Listed) error {
@@ -609,12 +579,35 @@ func copyTo(cmd *cobra.Command, ident *device.Identity, clip *clipboard.Service,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	fmt.Fprintf(cmd.OutOrStdout(), "Sending clipboard item to %s...\n", target.Name)
-	if err := client.SendClipboard(ctx, ident, target, it, nil); err != nil {
+	fmt.Fprintf(cmd.OutOrStdout(), "Sending clipboard -> %s\n", target.Name)
+	if err := sendClipboardItem(ctx, ident, target, it, nil); err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "✓ Copied to %s clipboard.\n", target.Name)
+	ok(cmd.OutOrStdout(), "Copied to "+target.Name+" clipboard")
 	return nil
+}
+
+func sendCurrentClipboard(cmd *cobra.Command, ident *device.Identity, clip *clipboard.Service, target *device.Listed) error {
+	item, err := currentClipboard(clip)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	fmt.Fprintf(cmd.OutOrStdout(), "Sending clipboard -> %s\n", target.Name)
+	if err := sendClipboardItem(ctx, ident, target, item, nil); err != nil {
+		return err
+	}
+	ok(cmd.OutOrStdout(), "Clipboard sent")
+	return nil
+}
+
+func targetForClipboard(cmd *cobra.Command, ident *device.Identity, to string) (*device.Listed, error) {
+	items, err := listed(ident)
+	if err != nil {
+		return nil, err
+	}
+	return resolveOrSelect(cmd, to, items)
 }
 
 func resolveCopy(clip *clipboard.Service, store *history.Store, copyID string) (*clipboard.Item, error) {

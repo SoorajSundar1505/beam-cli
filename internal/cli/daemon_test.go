@@ -33,9 +33,9 @@ func TestInitEnablesAutostartAndStartsDaemon(t *testing.T) {
 		t.Fatalf("starts=%d enables=%d, want 1 each", starts, enables)
 	}
 	for _, want := range []string{
-		"✓ BEAM is ready",
-		"✓ Background receiver started",
-		"✓ Autostart enabled",
+		"ok BEAM is ready",
+		"ok Background receiver started",
+		"ok Autostart enabled",
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("output missing %q:\n%s", want, output)
@@ -103,13 +103,13 @@ func TestDevicesFirstRunIsIdempotent(t *testing.T) {
 		t.Fatalf("identity was not created: %+v %v", ident, err)
 	}
 	for _, output := range []string{first, second} {
-		for _, want := range []string{"BEAM ● ONLINE", "Nearby devices", "1. Windows-PC", "● online"} {
+		for _, want := range []string{"BEAM * ONLINE", "Nearby devices", "1. Windows-PC", "* online"} {
 			if !strings.Contains(output, want) {
 				t.Errorf("output missing %q:\n%s", want, output)
 			}
 		}
 	}
-	if strings.Contains(second, "✓ BEAM is ready") {
+	if strings.Contains(second, "ok BEAM is ready") {
 		t.Fatal("repeated command repeated first-run setup")
 	}
 }
@@ -146,11 +146,12 @@ func TestStatusReporting(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"BEAM ● ONLINE",
+		"BEAM * ONLINE",
 		"Device: MacBook",
 		"Daemon: running (PID 4242)",
 		"Autostart: enabled",
-		"Nearby devices: 1",
+		"1. Windows-PC",
+		"* online",
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("status missing %q:\n%s", want, output)

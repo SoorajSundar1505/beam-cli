@@ -12,13 +12,7 @@ import (
 )
 
 func SelectDevice(in io.Reader, out io.Writer, items []device.Listed) (*device.Listed, error) {
-	fmt.Fprintln(out, "Select device:")
-	fmt.Fprintln(out)
-	for _, it := range items {
-		fmt.Fprintf(out, "%d. %-12s  %s\n", it.Index, it.Name, it.Status)
-	}
-	fmt.Fprintln(out)
-	fmt.Fprint(out, "Enter number: ")
+	renderChoices(out, items)
 	sc := bufio.NewScanner(in)
 	if !sc.Scan() {
 		return nil, fmt.Errorf("no device selected")
