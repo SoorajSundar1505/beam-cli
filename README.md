@@ -1,50 +1,16 @@
 # BEAM
 
-CLI-first, local-network file and clipboard transfer between **your** devices.
-No cloud, no accounts, no GUI.
+Send files and clipboard text between your own devices on the local network.
+No cloud, no accounts, no GUI. macOS and Windows.
 
-Phase 1 targets **macOS** and **Windows**. The protocol is ready for a future
-iPhone client; this tree does not fake iOS support.
-
-```text
-beam init
-beam pair
+```bash
 beam devices
-beam status
-beam send photo.jpg --to windows
-beam clipboard --list
-beam clipboard --search "meeting"
-beam clipboard --copy 1 --to windows
+beam pair
+beam send photo.jpg --to Suraj-Windows
+beam clipboard --to Suraj-Windows
 ```
-
-## Architecture
-
-```text
-cmd/beam                CLI entry
-internal/cli            cobra commands and transfer UX
-internal/device         identity, paired peers, current endpoints
-internal/discovery      mDNS/Bonjour (_beam._tcp)
-internal/pairing        6-digit local-network pairing
-internal/crypto         Ed25519 identity, X25519, ChaCha20-Poly1305
-internal/protocol       frames, offers, filename safety
-internal/transport      handshake + encrypted session
-internal/transfer       streaming send/receive + SHA-256
-internal/server         inbound file + clipboard (same session)
-internal/client         outbound file + clipboard (same session)
-internal/daemon         one background receiver and per-user autostart
-internal/clipboard      OS clipboard (macOS / Windows)
-internal/history        local SQLite clipboard history
-internal/queue          offline transfer spool
-internal/firewall       one-time Windows inbound TCP rule
-internal/storage        config/data paths
-```
-
-File transfer and clipboard use **one** TCP connection, handshake, and
-Offer/Accept/Data/Done framing. Details: [PROTOCOL.md](PROTOCOL.md).
 
 ## Install
-
-### Package managers
 
 macOS:
 
@@ -53,100 +19,31 @@ brew tap SoorajSundar1505/beam
 brew install beam
 ```
 
-Windows with Scoop:
+Windows:
 
 ```powershell
 scoop bucket add beam https://github.com/SoorajSundar1505/scoop-beam
 scoop install beam
 ```
 
-Windows with WinGet, once the official package has been published:
-
 ```powershell
 winget install SoorajSundar1505.Beam
 ```
 
-After installation, `beam`, `beam devices`, and `beam send FILE --to DEVICE` are on your `PATH`.
+Or download a binary from the latest [GitHub Release](https://github.com/SoorajSundar1505/beam-cli/releases/latest) and check it against `checksums.txt`.
 
-### GitHub Release
+| Platform | File |
+| --- | --- |
+| macOS Apple Silicon | `beam-darwin-arm64` |
+| macOS Intel | `beam-darwin-amd64` |
+| Windows | `beam-windows-amd64.exe` |
+| Linux | `beam-linux-amd64` |
 
-Download `checksums.txt` and the binary for your platform from the latest
-[GitHub Release](https://github.com/SoorajSundar1505/beam-cli/releases/latest).
+Build from this repo with Go 1.22 or newer: `go build -o beam ./cmd/beam`
 
-### macOS
+## Use
 
-Apple Silicon (M1, M2, M3, M4, and newer) uses `beam-darwin-arm64`. Intel Macs
-use `beam-darwin-amd64`.
-
-```bash
-chmod +x beam-darwin-arm64
-sudo mv beam-darwin-arm64 /usr/local/bin/beam
-beam --help
-```
-
-Verify the Apple Silicon download before installing:
-
-```bash
-grep ' beam-darwin-arm64$' checksums.txt | shasum -a 256 -c -
-```
-
-For an Intel Mac, replace `beam-darwin-arm64` with `beam-darwin-amd64`.
-
-### Windows
-
-Download `beam-windows-amd64.exe`. In PowerShell, verify it with:
-
-```powershell
-$expected = ((Select-String .\checksums.txt 'beam-windows-amd64\.exe$').Line -split '\s+')[0]
-$actual = (Get-FileHash .\beam-windows-amd64.exe -Algorithm SHA256).Hash.ToLower()
-if ($actual -ne $expected) { throw "Checksum verification failed" }
-Write-Host "Checksum verified"
-```
-
-Move the executable into a directory on your `PATH`, optionally renaming it to
-`beam.exe`.
-
-### Linux
-
-Download `beam-linux-amd64`, then verify and install it:
-
-```bash
-grep ' beam-linux-amd64$' checksums.txt | sha256sum -c -
-chmod +x beam-linux-amd64
-sudo mv beam-linux-amd64 /usr/local/bin/beam
-beam --help
-```
-
-### Build from source
-
-If Go 1.22 or newer is installed:
-
-```bash
-go install ./cmd/beam
-```
-
-Or from this repo:
-
-```bash
-go test ./...
-go build -o beam ./cmd/beam
-```
-
-## Setup
-
-After installing BEAM, run any normal command. The first one creates the
-device identity, installs per-user login startup, and starts one background
-daemon. That startup is quiet. Repeating a command does not create another
-identity or daemon.
-
-```bash
-beam devices
-```
-
-`beam devices` and `beam status` print the compact list. `[THIS DEVICE]` is
-this computer. `[ONLINE]` means a current advertisement was seen. A paired
-device whose last address failed shows `[UNREACHABLE]`. Addresses are not
-printed.
+The first command creates this device, starts one background receiver, and turns on login startup. You do not need to leave a terminal open.
 
 ```text
 BEAM [ONLINE]  Suraj-Mac
@@ -157,148 +54,50 @@ Devices
 2. Suraj-Windows   [ONLINE]
 ```
 
-No administrator privileges or `beam receive` is required. On Windows, the
-first run may ask once for permission to allow inbound TCP on BEAM's port for
-private networks. Later commands do not ask again.
+`[ONLINE]` means the other device was just seen. `[UNREACHABLE]` means the last address failed. BEAM does not print IP addresses.
 
-`beam init` is optional. The first time it runs, it prints:
+Pair once. On the other device, enter the code this one prints:
 
-```text
-ok Autostart enabled
-ok BEAM is ready
-ok Background receiver started
+```bash
+beam pair
+beam pair --code 482917
 ```
 
-A later `beam init` prints `BEAM is already configured`. Use it to set the
-name other devices see. The device ID and keys stay the same, and paired
-devices pick up the new name from discovery:
+Rename this device without changing its identity:
 
 ```bash
 beam init --name Suraj-Mac
 ```
 
-### Pair
-
-Device A:
+If a send cannot reach the other device, BEAM tries the newest discovered address once, then prints `Transfer failed: Suraj-Windows is currently unreachable.` Add `--debug` to see the network error. An offline device can queue the file locally until it is back.
 
 ```bash
-beam pair
-# Pairing code: 482917
-```
-
-Device B:
-
-```bash
-beam pair --code 482917
-```
-
-The code is mixed into session key derivation. It is not sent in plaintext.
-
-### Stay reachable
-
-Any normal command starts the background receiver when it is stopped. The
-receiver advertises the current address and accepts authenticated file and
-clipboard transfers, so you do not need to keep a terminal open. If this
-computer's address changes, the advertisement is updated. A send uses the
-newest discovered address and tries once more if the previous address is dead.
-When a device still cannot be reached, the message is:
-
-```text
-Transfer failed: Suraj-Windows is currently unreachable.
-```
-
-`beam --debug` prints the underlying network error as well.
-
-```bash
-beam status
-beam stop
-beam start
-```
-
-Autostart is enabled the first time the identity is created, including `beam init`. To turn it back on later:
-
-```bash
-beam start --autostart
-```
-
-Disable sign-in startup while stopping the receiver:
-
-```bash
+beam stop                  # stop the receiver
+beam start                 # start it again
+beam start --autostart     # also start at login
 beam stop --disable-autostart
 ```
 
-`beam receive` remains available for foreground operation and troubleshooting;
-run `beam stop` first so the foreground receiver can use the listening port.
-For daemon-specific debugging, `beam daemon` runs the same service in the
-foreground and writes errors directly to the terminal.
-
-Background daemon diagnostics, including the TCP bind address, accepted
-connections, and mDNS addresses/port, are written to `runtime/daemon.log`
-inside BEAM's local data directory. On Windows this is normally under
-`%APPDATA%\beam\data`; on macOS it is under
-`~/Library/Application Support/beam`.
-
-### Offline transfers
-
-If a paired device is offline, BEAM can queue a private local copy:
-
-```text
-Windows-PC is offline
-Queue transfer? [Y/n]
-ok Queued report.pdf for Windows-PC (2 MB)
-```
-
-The background receiver retries queued files and removes each spool copy after
-successful delivery. Queue files remain local and are stored with user-only
-permissions.
+Received files go to `~/Downloads`.
 
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
-| `beam init [--name NAME]` | Create identity, or rename this device without changing its keys |
-| `beam pair` | Host pairing (prints code) |
-| `beam pair --code NNNNNN` | Join pairing |
-| `beam devices` | This device and discovered peers |
-| `beam send FILE [--to NAME]` | Stream a file (any type) |
-| `beam start [--autostart]` | Start the background receiver |
-| `beam stop [--disable-autostart]` | Stop the background receiver |
-| `beam status` | Bring the receiver online and show compact status |
-| `beam status --verbose` | Status plus PID, queue count, and paths |
-| `beam daemon` | Run the daemon in the foreground for debugging |
-| `beam receive` | Run the receiver in the foreground |
-| `beam clipboard --list` | Local history only |
-| `beam clipboard --search Q` | Substring search |
-| `beam clipboard --to NAME` | Send the current system clipboard |
-| `beam clipboard --copy N --to NAME` | Send history item N (1 = newest) |
-| `beam clipboard --copy "text" --to NAME` | Send literal text |
-| `beam --debug` | With a transfer, also print the underlying network error |
+| `beam devices` | This device and paired devices |
+| `beam status` | Receiver status and the device list |
+| `beam send FILE [--to NAME]` | Send a file |
+| `beam clipboard [--to NAME]` | Send the current clipboard |
+| `beam clipboard --list` | Local clipboard history |
+| `beam clipboard --search TEXT` | Search that history |
+| `beam clipboard --copy N --to NAME` | Send history item N |
+| `beam pair` | Show a pairing code |
+| `beam pair --code NNNNNN` | Pair with that code |
+| `beam init [--name NAME]` | Create or rename this device |
+| `beam stop` | Stop the background receiver |
 
-If `--to` is omitted, BEAM asks for a device number.
+Without `--to`, BEAM asks you to pick a device.
 
-Default save location: `~/Downloads` (`BEAM_DOWNLOADS_DIR` overrides).
+## Security
 
-## Security properties (Phase 1)
-
-- Device identity is an Ed25519 keypair; ID is derived from the public key.
-- Data sessions require a paired public key match.
-- Payloads are ChaCha20-Poly1305 after ECDH.
-- Filenames are sanitized (`filepath.Base`); writes stay in the downloads dir.
-- SHA-256 is checked at the end of every payload; failures delete `*.beam.partial`.
-- Clipboard bodies and private keys are not written to application logs.
-- Config and keys are created with mode `0600`.
-
-## Tests
-
-```bash
-go test ./...
-```
-
-Covers identity, pairing handshake, encrypted sessions, streaming transfers,
-checksums, interrupted transfers, clipboard history/search, clipboard payload
-transfer, renamed peers, stale addresses, bounded connection retry, and
-offline peers.
-
-## Not in Phase 1
-
-GUI, cloud, accounts, QR pairing, folder sync, automation/BEAMFLOW, iPhone app.
+Each device has an Ed25519 identity. Transfers use a paired key, X25519, and ChaCha20-Poly1305, and every file is checked with SHA-256. Clipboard text and private keys are not written to logs. Protocol details are in [PROTOCOL.md](PROTOCOL.md).
