@@ -22,7 +22,7 @@ beam clipboard --copy 1 --to windows
 ```text
 cmd/beam                CLI entry
 internal/cli            cobra commands and transfer UX
-internal/device         identity, paired peers, device table
+internal/device         identity, paired peers, current endpoints
 internal/discovery      mDNS/Bonjour (_beam._tcp)
 internal/pairing        6-digit local-network pairing
 internal/crypto         Ed25519 identity, X25519, ChaCha20-Poly1305
@@ -31,8 +31,11 @@ internal/transport      handshake + encrypted session
 internal/transfer       streaming send/receive + SHA-256
 internal/server         inbound file + clipboard (same session)
 internal/client         outbound file + clipboard (same session)
+internal/daemon         one background receiver and per-user autostart
 internal/clipboard      OS clipboard (macOS / Windows)
 internal/history        local SQLite clipboard history
+internal/queue          offline transfer spool
+internal/firewall       one-time Windows inbound TCP rule
 internal/storage        config/data paths
 ```
 
@@ -133,19 +136,45 @@ go build -o beam ./cmd/beam
 
 After installing BEAM, run any normal command. The first one creates the
 device identity, installs per-user login startup, and starts one background
-daemon:
+daemon. That startup is quiet. Repeating a command does not create another
+identity or daemon.
 
 ```bash
 beam devices
 ```
 
-No administrator privileges, manual `beam init`, or `beam receive` is required.
-Repeating the command does not create another identity or daemon.
+`beam devices` and `beam status` print the compact list. `[THIS DEVICE]` is
+this computer. `[ONLINE]` means a current advertisement was seen. A paired
+device whose last address failed shows `[UNREACHABLE]`. Addresses are not
+printed.
 
 ```text
+BEAM [ONLINE]  Suraj-Mac
+
+Devices
+
+1. Suraj-Mac       [THIS DEVICE]
+2. Suraj-Windows   [ONLINE]
+```
+
+No administrator privileges or `beam receive` is required. On Windows, the
+first run may ask once for permission to allow inbound TCP on BEAM's port for
+private networks. Later commands do not ask again.
+
+`beam init` is optional. The first time it runs, it prints:
+
+```text
+ok Autostart enabled
 ok BEAM is ready
 ok Background receiver started
-ok Autostart enabled
+```
+
+A later `beam init` prints `BEAM is already configured`. Use it to set the
+name other devices see. The device ID and keys stay the same, and paired
+devices pick up the new name from discovery:
+
+```bash
+beam init --name Suraj-Mac
 ```
 
 ### Pair
@@ -167,9 +196,18 @@ The code is mixed into session key derivation. It is not sent in plaintext.
 
 ### Stay reachable
 
-`beam init` starts a lightweight background receiver. It advertises the device
-on the LAN and accepts authenticated file and clipboard transfers, so you do
-not need to keep a terminal open.
+Any normal command starts the background receiver when it is stopped. The
+receiver advertises the current address and accepts authenticated file and
+clipboard transfers, so you do not need to keep a terminal open. If this
+computer's address changes, the advertisement is updated. A send uses the
+newest discovered address and tries once more if the previous address is dead.
+When a device still cannot be reached, the message is:
+
+```text
+Transfer failed: Suraj-Windows is currently unreachable.
+```
+
+`beam --debug` prints the underlying network error as well.
 
 ```bash
 beam status
@@ -177,7 +215,7 @@ beam stop
 beam start
 ```
 
-Autostart is enabled by `beam init`. To re-enable it later:
+Autostart is enabled the first time the identity is created, including `beam init`. To turn it back on later:
 
 ```bash
 beam start --autostart
@@ -218,7 +256,7 @@ permissions.
 
 | Command | Purpose |
 | --- | --- |
-| `beam init` | Create identity, enable autostart, and start the receiver |
+| `beam init [--name NAME]` | Create identity, or rename this device without changing its keys |
 | `beam pair` | Host pairing (prints code) |
 | `beam pair --code NNNNNN` | Join pairing |
 | `beam devices` | This device and discovered peers |
@@ -234,6 +272,7 @@ permissions.
 | `beam clipboard --to NAME` | Send the current system clipboard |
 | `beam clipboard --copy N --to NAME` | Send history item N (1 = newest) |
 | `beam clipboard --copy "text" --to NAME` | Send literal text |
+| `beam --debug` | With a transfer, also print the underlying network error |
 
 If `--to` is omitted, BEAM asks for a device number.
 
@@ -257,7 +296,8 @@ go test ./...
 
 Covers identity, pairing handshake, encrypted sessions, streaming transfers,
 checksums, interrupted transfers, clipboard history/search, clipboard payload
-transfer, and offline peers.
+transfer, renamed peers, stale addresses, bounded connection retry, and
+offline peers.
 
 ## Not in Phase 1
 
