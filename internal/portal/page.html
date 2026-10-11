@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BEAM Portal</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: auto; min-height: 100dvh;
+    overflow-x: hidden; overflow-y: auto;
+    color: #e8eefc; background: #07080d;
+    font: 15px/1.4 ui-sans-serif, system-ui, sans-serif;
+  }
+  .layout {
+    display: grid; grid-template-columns: 260px minmax(0, 1fr);
+    align-items: stretch; width: 100%; max-width: 100%; height: 100dvh; overflow: hidden;
+  }
+  aside {
+    position: sticky; top: 0; height: 100dvh; max-height: 100dvh; width: 100%;
+    min-width: 0; display: flex; flex-direction: column;
+    padding: 22px 16px; border-right: 1px solid rgba(160,190,255,.12);
+    background: #0b0e16; overflow: hidden;
+  }
+  aside h1 { flex: none; font-size: 13px; letter-spacing: .14em; color: #9eb0d4; margin: 0 0 12px; }
+  #tray { flex: 1 1 auto; min-height: 0; min-width: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+  .file {
+    width: 100%; max-width: 100%; min-width: 0; text-align: left; margin: 0 0 8px; padding: 12px;
+    border-radius: 14px; border: 1px solid rgba(180,200,255,.2); background: #121722; color: inherit;
+    overflow-wrap: anywhere; word-break: break-word;
+  }
+  .file small { display: block; color: #93a0bb; }
+  .file.hover, .file.held { border-color: #ffb15a; box-shadow: 0 0 18px rgba(255,140,40,.55); }
+  .tools { flex: none; min-width: 0; max-width: 100%; margin-top: 14px; color: #93a0bb; font-size: 12px; overflow-wrap: anywhere; }
+  .tools input { max-width: 100%; }
+  main { min-width: 0; max-width: 100%; height: 100dvh; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .stage {
+    position: relative; flex: 1 1 auto; min-width: 0; width: 100%;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 16px; padding: 24px 20px 16px;
+  }
+  .prompt { display: none; }
+  #world { position: relative; width: min(100%, 520px, 58dvh); aspect-ratio: 1; margin: 0 auto; }
+  #world[hidden] { display: none; }
+  #devices { position: absolute; inset: 0; }
+  .ring, .portal, .device { position: absolute; left: 50%; top: 50%; border-radius: 50%; }
+  .ring { width: 78%; height: 78%; margin: 0; transform: translate(-50%, -50%); pointer-events: none; }
+  .ring::before, .ring::after {
+    content: ""; position: absolute; border-radius: 50%; pointer-events: none;
+  }
+  .ring::before {
+    inset: -6%;
+    background: conic-gradient(from var(--a), #ff5a00, #ffe0a8, #ff8a1e, #ff3d00, #ffd27a, #ff5a00);
+    -webkit-mask: radial-gradient(circle, transparent 62%, #000 66%, #000 72%, transparent 78%);
+    mask: radial-gradient(circle, transparent 62%, #000 66%, #000 72%, transparent 78%);
+    filter: drop-shadow(0 0 10px rgba(255,140,30,.85)) drop-shadow(0 0 22px rgba(255,80,0,.45));
+    animation: spin 14s linear infinite;
+  }
+  .ring::after {
+    inset: -2%;
+    background:
+      radial-gradient(circle at 12% 20%, #fff 0 1.5px, transparent 2px),
+      radial-gradient(circle at 78% 16%, #ffd7a0 0 1.2px, transparent 2px),
+      radial-gradient(circle at 88% 62%, #fff 0 1px, transparent 1.8px),
+      radial-gradient(circle at 24% 78%, #ffb15a 0 1.4px, transparent 2px),
+      radial-gradient(circle at 50% 8%, #ffe7c2 0 1px, transparent 1.6px),
+      radial-gradient(circle at 64% 88%, #ff8a1e 0 1.3px, transparent 2px);
+    -webkit-mask: radial-gradient(circle, transparent 58%, #000 64%, #000 84%, transparent 92%);
+    mask: radial-gradient(circle, transparent 58%, #000 64%, #000 84%, transparent 92%);
+    opacity: .85;
+    animation: spin 22s linear infinite reverse;
+  }
+  #world.opening .ring { animation: bloom .7s ease-out; }
+  .portal {
+    width: 34%; height: 34%; margin: 0; transform: translate(-50%, -50%);
+    display: grid; place-items: center; text-align: center;
+    background:
+      radial-gradient(circle at 50% 42%, rgba(255,186,90,.28), transparent 46%),
+      radial-gradient(circle at 50% 58%, #24180f, #07080d 74%);
+    box-shadow: inset 0 0 36px rgba(255,150,40,.28), 0 0 24px rgba(255,110,20,.2);
+    color: #f0d2a4;
+  }
+  .portal.hot { box-shadow: 0 0 36px rgba(255,150,40,.75), inset 0 0 36px rgba(255,150,40,.28); }
+  .portal.sent { box-shadow: inset 0 0 28px rgba(140,220,160,.35), 0 0 24px rgba(140,220,160,.25); color: #b6f3c8; }
+  .portal.sent::before { content: "✓"; font-size: 32px; line-height: 1; }
+  .device {
+    width: clamp(72px, 22%, 92px); height: clamp(72px, 22%, 92px);
+    margin: 0; translate: -50% -50%;
+    display: grid; place-items: center; text-align: center;
+    background: radial-gradient(circle at 50% 38%, #2c241c, #12100e 72%);
+    border: 1px solid rgba(255,186,90,.72); padding: 8px;
+    overflow: hidden; overflow-wrap: anywhere; font-size: 12px;
+    box-shadow: 0 0 16px rgba(255,120,30,.28);
+    transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease;
+  }
+  .device small { display: block; color: #93a0bb; font-size: 11px; }
+  .device.hover, .device:focus-visible { border-color: #ffd7a8; box-shadow: 0 0 16px rgba(255,180,80,.65); }
+  .device.selected { border-color: #ffb15a; box-shadow: 0 0 22px rgba(255,140,40,.9); }
+  .device.online { border-color: rgba(140,220,160,.7); }
+  .device.unreachable { border-color: #ffb4b4; }
+  .device.offline { opacity: 0.6; }
+  #progress {
+    position: absolute; left: 50%; top: 54%; transform: translate(-50%, 0);
+    width: min(220px, 46%); max-width: 100%; margin: 0; z-index: 5; text-align: center;
+  }
+  #progress p { margin: 6px 0 0; font-size: 12px; color: #f0d2a4; }
+  @media (max-width: 800px) {
+    .layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 38dvh) minmax(0, 1fr); }
+    aside { position: relative; height: 100%; max-height: none; border-right: 0; border-bottom: 1px solid rgba(160,190,255,.12); }
+    main { height: 100%; min-height: 0; }
+    .stage { min-height: 0; height: 100%; }
+    #world { width: min(78%, 56dvh); }
+  }
+  #bar { height: 8px; border-radius: 99px; background: #1c2433; overflow: hidden; }
+  #bar span { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #ff6a00, #ffd27a); transition: width .2s linear; }
+  .cursor {
+    position: fixed; width: 22px; height: 22px; margin: -11px; border-radius: 50%;
+    border: 2px solid #ffe7c2;
+    background: radial-gradient(circle, #fff 0 3px, transparent 4px);
+    box-shadow: 0 0 12px #ff8a1e; pointer-events: none; z-index: 6;
+  }
+  .heldchip {
+    position: fixed; z-index: 6; pointer-events: none; padding: 8px 12px; border-radius: 999px;
+    background: rgba(18,23,34,.92); border: 1px solid #ffb15a;
+  }
+  #status {
+    position: absolute; left: 16px; right: 16px; bottom: 18px; z-index: 3;
+    margin: 0; text-align: center; pointer-events: none;
+    font-size: 13px; letter-spacing: .05em; color: #f0d2a4;
+    text-shadow: 0 1px 10px rgba(0,0,0,.8);
+  }
+  #status.error { color: #ffb4b4; }
+  #status.ok { color: #b6f3c8; }
+  @media (min-width: 801px) {
+    #status { left: 24px; right: 248px; bottom: 28px; }
+  }
+  #debug {
+    position: absolute; left: 16px; bottom: 46px; z-index: 4;
+    margin: 0; pointer-events: none; white-space: pre;
+    padding: 6px 8px; border-radius: 8px;
+    background: rgba(8, 10, 14, .55);
+    font: 11px/1.45 ui-monospace, SFMono-Regular, monospace;
+    color: rgba(240, 210, 164, .88);
+  }
+  @media (min-width: 801px) {
+    #debug { left: 24px; bottom: 58px; }
+  }
+  #guide, #arc, #trail { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; background: none; }
+  #guide { z-index: 2; }
+  #arc { z-index: 3; }
+  #trail { z-index: 4; }
+  body[data-gesture="SCROLLING"] .cursor { border-color: #8fd0ff; box-shadow: 0 0 16px #8fd0ff; }
+  body[data-gesture="PINCHING"] .cursor,
+  body[data-gesture="GRABBED"] .cursor,
+  body[data-gesture="DRAGGING"] .cursor { width: 12px; height: 12px; margin: -6px; }
+  .cam {
+    position: absolute; right: 16px; bottom: 16px; z-index: 8; flex: none;
+    width: min(32%, 220px); min-width: 140px; max-width: 100%;
+    aspect-ratio: 16 / 10; min-height: 88px; height: auto;
+    border-radius: 16px; overflow: hidden; background: #141820;
+    box-shadow: 0 12px 32px rgba(0,0,0,.4);
+  }
+  .cam video, .cam canvas {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    pointer-events: none; opacity: 1; filter: none;
+  }
+  .cam video {
+    z-index: 1; object-fit: cover; object-position: center; background: transparent;
+    transform: scaleX(-1);
+  }
+  .cam canvas { z-index: 2; background: none; transform: scaleX(-1); overflow: hidden; }
+  @media (max-width: 800px) {
+    .cam { position: relative; right: auto; bottom: auto; width: min(100%, 240px); min-width: 0; margin: 0 auto; }
+  }
+  .cam p {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; margin: 0;
+    padding: 14px 8px 6px; text-align: center; font-size: 11px; color: #f0d2a4;
+    background: linear-gradient(transparent, rgba(0,0,0,.55));
+  }
+  @keyframes spin { to { --a: 360deg; } }
+  @keyframes bloom { from { transform: translate(-50%, -50%) scale(.15); opacity: 0; } to { transform: translate(-50%, -50%) scale(1); opacity: 1; } }
+  @property --a { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside>
+    <h1>FILE TRAY</h1>
+    <div id="tray"></div>
+    <div class="tools">
+      <p>Move your index fingertip to draw a circle. You do not need to pinch. Drag on the stage with the mouse to try the same stroke.</p>
+      <label>Import files <input id="importer" type="file" multiple></label>
+      <label><input id="mouse" type="checkbox"> Draw with mouse</label>
+      <label><input id="skel" type="checkbox"> Debug</label>
+    </div>
+  </aside>
+  <main>
+    <div class="stage" id="stage">
+      <p class="prompt" id="prompt">Draw a circle to open the portal.</p>
+      <div id="world" hidden>
+        <div class="ring"></div>
+        <div class="portal" id="portal"></div>
+        <div id="devices"></div>
+      </div>
+      <div class="cam">
+        <video id="video" autoplay muted playsinline></video>
+        <canvas id="bones" width="640" height="380"></canvas>
+        <p id="cammsg" hidden></p>
+      </div>
+      <div id="progress" hidden><div id="bar"><span id="fill"></span></div><p id="progressText"></p></div>
+      <p id="status">Draw a circle to open the portal.</p>
+      <div id="debug" hidden></div>
+    </div>
+  </main>
+</div>
+<canvas id="guide"></canvas>
+<canvas id="arc"></canvas>
+<canvas id="trail"></canvas>
+<div class="cursor" id="cursor" hidden></div>
+<div class="heldchip" id="chip" hidden></div>
+<script>
+const links = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
+const trayEl = document.getElementById("tray");
+const deviceEl = document.getElementById("devices");
+const world = document.getElementById("world");
+const stage = document.getElementById("stage");
+const portal = document.getElementById("portal");
+const prompt = document.getElementById("prompt");
+const cursor = document.getElementById("cursor");
+const chip = document.getElementById("chip");
+const statusEl = document.getElementById("status");
+const debugEl = document.getElementById("debug");
+const progress = document.getElementById("progress");
+const fill = document.getElementById("fill");
+const progressText = document.getElementById("progressText");
+const guide = document.getElementById("guide");
+const gg = guide.getContext("2d");
+const arcLayer = document.getElementById("arc");
+const ag = arcLayer.getContext("2d");
+const trail = document.getElementById("trail");
+const tg = trail.getContext("2d");
+const video = document.getElementById("video");
+const bones = document.getElementById("bones");
+const g = bones.getContext("2d");
+let tray = [], devices = [], sending = false, busy = false, landmarker = null, lastVideo = -1, cameraStream = null;
+
+function setStatus(text, kind) { statusEl.textContent = text || ""; statusEl.className = kind || ""; }
+async function loadTray() {
+  const body = await (await fetch("/api/tray")).json();
+  tray = body.items || [];
+  trayEl.replaceChildren();
+  tray.forEach((item, i) => {
+    const el = document.createElement("div");
+    el.className = "file";
+    el.dataset.file = String(i);
+    el.innerHTML = `${item.name}<small>${item.kind}</small>`;
+    trayEl.append(el);
+  });
+  if (!tray.length) trayEl.textContent = "No files yet. Start with beam portal --tray DIRECTORY, or import files.";
+}
+async function loadDevices() {
+  const body = await (await fetch("/api/devices")).json();
+  devices = body.devices || [];
+  deviceEl.replaceChildren();
+  devices.forEach((device, i) => {
+    const el = document.createElement("div");
+    el.className = "device " + (device.status || "");
+    el.tabIndex = 0;
+    el.setAttribute("role", "button");
+    el.dataset.device = String(i);
+    const angle = -Math.PI / 2 + i * 2 * Math.PI / Math.max(devices.length, 1);
+    el.style.transform = `translate(${Math.cos(angle) * orbitRadius()}px, ${Math.sin(angle) * orbitRadius()}px)`;
+    el.innerHTML = `${device.name}<small>${device.status.toUpperCase()}</small>`;
+    deviceEl.append(el);
+  });
+}
+function orbitRadius() {
+  const size = world.clientWidth || Math.min(stage.clientWidth, 560);
+  return Math.max(88, size * 0.42);
+}
+function placeDevices() {
+  const radius = orbitRadius();
+  const nodes = document.querySelectorAll(".device");
+  nodes.forEach((el, i) => {
+    const angle = -Math.PI / 2 + i * 2 * Math.PI / Math.max(nodes.length, 1);
+    el.style.transform = `translate(${Math.cos(angle) * radius}px, ${Math.sin(angle) * radius}px)`;
+  });
+}
+const trayBand = 0.18;
+function clamp01(v) { return Math.min(1, Math.max(0, v)); }
+function stageSpace() {
+  const aside = document.querySelector("aside").getBoundingClientRect();
+  const main = document.querySelector("main").getBoundingClientRect();
+  const stacked = aside.width > innerWidth * 0.85;
+  const size = Math.max(1, Math.min(main.width, main.height) * 0.92);
+  return {
+    aside, main, stacked, size,
+    left: main.left + (main.width - size) / 2,
+    top: main.top + (main.height - size) / 2
+  };
+}
+function stagePointer(nx, ny) {
+  const s = stageSpace();
+  return { px: s.left + clamp01(nx) * s.size, py: s.top + clamp01(ny) * s.size };
+}
+function pointerFromNorm(nx, ny) {
+  const s = stageSpace();
+  nx = clamp01(nx);
+  ny = clamp01(ny);
+  if (!s.stacked && nx < trayBand) {
+    return { px: s.aside.left + (nx / trayBand) * s.aside.width, py: s.aside.top + ny * s.aside.height };
+  }
+  if (s.stacked && ny < trayBand) {
+    return { px: s.aside.left + nx * s.aside.width, py: s.aside.top + (ny / trayBand) * s.aside.height };
+  }
+  return stagePointer(nx, ny);
+}
+function normFromPointer(px, py) {
+  const s = stageSpace();
+  const inAside = px >= s.aside.left && px <= s.aside.right && py >= s.aside.top && py <= s.aside.bottom;
+  if (!s.stacked && inAside && px < s.main.left) {
+    return {
+      x: clamp01(((px - s.aside.left) / Math.max(1, s.aside.width)) * trayBand),
+      y: clamp01((py - s.aside.top) / Math.max(1, s.aside.height))
+    };
+  }
+  if (s.stacked && inAside) {
+    return {
+      x: clamp01((px - s.aside.left) / Math.max(1, s.aside.width)),
+      y: clamp01(((py - s.aside.top) / Math.max(1, s.aside.height)) * trayBand)
+    };
+  }
+  return { x: clamp01((px - s.left) / s.size), y: clamp01((py - s.top) / s.size) };
+}
+function sizeLayer(canvas, ctx) {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.max(1, innerWidth);
+  const h = Math.max(1, innerHeight);
+  const bw = Math.floor(w * dpr), bh = Math.floor(h * dpr);
+  if (canvas.width !== bw || canvas.height !== bh) {
+    canvas.width = bw;
+    canvas.height = bh;
+    canvas.style.width = w + "px";
+    canvas.style.height = h + "px";
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+}
+function paintGuide() {
+  sizeLayer(guide, gg);
+}
+function paintArc(view) {
+  sizeLayer(arcLayer, ag);
+  if (!view || view.open || !(view.ringR > 0.04) || !view.sweep) return;
+  if (view.ringX < 0 || view.ringX > 1 || view.ringY < 0 || view.ringY > 1 || view.ringR > 0.46) return;
+  const s = stageSpace();
+  const c = stagePointer(view.ringX, view.ringY);
+  const radius = view.ringR * s.size;
+  if (radius < 18) return;
+  ag.save();
+  ag.beginPath();
+  ag.rect(s.left, s.top, s.size, s.size);
+  ag.clip();
+  const start = view.arc || 0;
+  ag.beginPath();
+  ag.strokeStyle = "rgba(255, 196, 120, .9)";
+  ag.lineWidth = 2.5;
+  ag.lineCap = "round";
+  ag.arc(c.px, c.py, radius, start, start + view.sweep, view.sweep < 0);
+  ag.stroke();
+  ag.restore();
+}
+function paint(view) {
+  lastView = view;
+  const open = !!view.open;
+  document.body.classList.toggle("portal-open", open);
+  world.hidden = !open;
+  if (open) placeDevices();
+  if (view.recognized) {
+    world.classList.add("opening");
+    portal.classList.remove("sent");
+    setTimeout(() => world.classList.remove("opening"), 700);
+  }
+  prompt.hidden = true;
+  document.body.dataset.gesture = view.phase || "IDLE";
+  cursor.hidden = false;
+  if (view.scroll) trayEl.scrollTop += view.scroll;
+  const finger = !open ? stagePointer(view.x, view.y) : pointerFromNorm(view.x, view.y);
+  cursor.style.left = finger.px + "px";
+  cursor.style.top = finger.py + "px";
+  document.querySelectorAll(".file").forEach((el, i) => {
+    el.classList.toggle("hover", view.hoverFile === i);
+    el.classList.toggle("held", view.held === i);
+  });
+  document.querySelectorAll(".device").forEach((el, i) => {
+    el.classList.toggle("hover", view.hoverDevice === i);
+    el.classList.toggle("selected", view.destination === i);
+  });
+  portal.classList.toggle("hot", view.phase === "THROWING" || view.phase === "DRAGGING");
+  paintGuide();
+  paintArc(view);
+  sizeLayer(trail, tg);
+  const showDebug = document.getElementById("skel").checked;
+  debugEl.hidden = !showDebug;
+  debugEl.textContent = showDebug ? [
+    "state " + (view.drawState || view.phase || "IDLE"),
+    "confidence " + Number(view.confidence || 0).toFixed(2),
+    "fingertip " + Number(view.x || 0).toFixed(3) + ", " + Number(view.y || 0).toFixed(3),
+    "canvas " + Math.round(finger.px) + ", " + Math.round(finger.py),
+    "loss " + (view.lostMs || 0) + "ms",
+    "progress " + Math.round(view.degrees || 0) + "°",
+    "center " + Number(view.ringX || 0).toFixed(2) + ", " + Number(view.ringY || 0).toFixed(2) + " r " + Number(view.ringR || 0).toFixed(2),
+    "reason " + (view.reason || "none")
+  ].join("\n") : "";
+  if (view.held >= 0 && tray[view.held]) {
+    chip.hidden = false;
+    chip.textContent = tray[view.held].name;
+    chip.style.left = cursor.style.left;
+    chip.style.top = cursor.style.top;
+  } else chip.hidden = true;
+  if (!sending) {
+    if (!open) {
+      setStatus(view.message && view.message !== "Start drawing" ? view.message : "Draw a circle to open the portal.", "");
+    } else if (view.recognized) {
+      setStatus("Portal opening…", "ok");
+    } else if (view.message) {
+      setStatus(view.message, view.send ? "ok" : "");
+    }
+  }
+}
+function hits(px, py) {
+  let overFile = -1, overDevice = -1, overPortal = false;
+  document.querySelectorAll(".file").forEach((el) => {
+    const r = el.getBoundingClientRect();
+    if (px >= r.left && px <= r.right && py >= r.top && py <= r.bottom) overFile = Number(el.dataset.file);
+  });
+  if (!world.hidden) {
+    let best = Infinity;
+    document.querySelectorAll(".device").forEach((el) => {
+      const r = el.getBoundingClientRect();
+      const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      const pad = 28;
+      const dx = px - cx, dy = py - cy;
+      const near = Math.abs(dx) <= r.width / 2 + pad && Math.abs(dy) <= r.height / 2 + pad;
+      const dist = Math.hypot(dx, dy);
+      if (near && dist < best) {
+        best = dist;
+        overDevice = Number(el.dataset.device);
+      }
+    });
+    const pr = portal.getBoundingClientRect();
+    const radius = Math.max(pr.width, pr.height) / 2;
+    overPortal = Math.hypot(px - (pr.left + pr.width / 2), py - (pr.top + pr.height / 2)) <= radius;
+    if (overDevice >= 0) overPortal = false;
+  }
+  return {overFile, overDevice, overPortal};
+}
+function traySample(px, py) {
+  const aside = document.querySelector("aside").getBoundingClientRect();
+  const box = trayEl.getBoundingClientRect();
+  const overTray = px >= aside.left && px <= aside.right && py >= aside.top && py <= aside.bottom;
+  const trayY = box.height > 0 ? (py - box.top) / box.height : 0.5;
+  return {overTray, trayY};
+}
+async function step(x, y, pinch, confidence, present) {
+  const finger = pointerFromNorm(x, y);
+  const px = finger.px, py = finger.py;
+  const hit = hits(px, py);
+  const trayHit = traySample(px, py);
+  const box = portal.getBoundingClientRect();
+  const portalNorm = normFromPointer(box.left + box.width / 2, box.top + box.height / 2);
+  const res = await fetch("/api/gesture", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      present, confidence, x, y, pinch,
+      overFile: hit.overFile, overDevice: hit.overDevice, overPortal: hit.overPortal,
+      overTray: trayHit.overTray, trayY: trayHit.trayY,
+      toPortalX: portalNorm.x - x, toPortalY: portalNorm.y - y
+    })
+  });
+  const view = await res.json();
+  paint(view);
+  if (view.send && !sending) {
+    sending = true;
+    progress.hidden = false;
+    try {
+      const item = tray[view.held];
+      const device = devices[view.destination];
+      if (!item || !device) throw new Error("Select a device first");
+      const started = await fetch("/api/send/tray", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({device: device.id, item: item.id})
+      });
+      const job = await started.json();
+      if (!started.ok) throw new Error(job.error || "Transfer failed");
+      for (;;) {
+        const state = await (await fetch("/api/jobs/" + job.id)).json();
+        const pct = state.total > 0 ? state.percent : 0;
+        fill.style.width = pct + "%";
+        progressText.textContent = state.total > 0 ? `Sending to ${device.name}… ${pct}%` : `Sending to ${device.name}…`;
+        if (state.status === "done") {
+        setStatus("File sent", "ok");
+        progressText.textContent = "File sent";
+        portal.classList.add("sent");
+        break;
+      }
+        if (state.status === "error") throw new Error(state.error || "Transfer failed");
+        if (state.status === "cancelled") { setStatus("Transfer cancelled"); break; }
+        await new Promise(r => setTimeout(r, 200));
+      }
+    } catch (err) { setStatus(err.message, "error"); }
+    await fetch("/api/gesture/reset", {method: "POST"});
+    sending = false;
+  }
+}
+function fitPreview() {
+  const box = video.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.max(1, Math.round(box.width * dpr));
+  const h = Math.max(1, Math.round(box.height * dpr));
+  if (bones.width !== w || bones.height !== h) {
+    bones.width = w;
+    bones.height = h;
+  }
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, box.width || 1, box.height || 1);
+  return box;
+}
+function clearPreview() {
+  fitPreview();
+}
+function drawPreview(landmarks) {
+  const box = fitPreview();
+  if (!box.width || !landmarks) return;
+  const at = landmarks.map((mark) => previewPoint(mark.x, mark.y));
+  if (at.some((p) => !p)) return;
+  g.save();
+  g.beginPath();
+  g.rect(0, 0, box.width, box.height);
+  g.clip();
+  g.lineCap = "round";
+  g.lineJoin = "round";
+  g.strokeStyle = "rgba(255, 220, 180, .55)";
+  g.lineWidth = 1;
+  for (const [a, b] of links) {
+    g.beginPath();
+    g.moveTo(at[a].x, at[a].y);
+    g.lineTo(at[b].x, at[b].y);
+    g.stroke();
+  }
+  g.fillStyle = "rgba(255, 236, 214, .75)";
+  for (let i = 0; i < at.length; i++) {
+    if (i === 8) continue;
+    g.beginPath();
+    g.arc(at[i].x, at[i].y, 1.4, 0, Math.PI * 2);
+    g.fill();
+  }
+  const tip = at[8];
+  g.fillStyle = "#ffc27a";
+  g.shadowColor = "rgba(255, 120, 30, .95)";
+  g.shadowBlur = 7;
+  g.beginPath();
+  g.arc(tip.x, tip.y, 3.2, 0, Math.PI * 2);
+  g.fill();
+  g.shadowBlur = 0;
+  g.restore();
+}
+// object-fit: cover crops the frame. The canvas is mirrored with the video,
+// so x is not flipped again here.
+function coverMap(nx, ny, videoW, videoH, boxW, boxH) {
+  const scale = Math.max(boxW / videoW, boxH / videoH);
+  const ox = (boxW - videoW * scale) / 2;
+  const oy = (boxH - videoH * scale) / 2;
+  return { x: ox + nx * videoW * scale, y: oy + ny * videoH * scale };
+}
+function previewPoint(nx, ny) {
+  const box = video.getBoundingClientRect();
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh || box.width < 2 || box.height < 2) return null;
+  return coverMap(nx, ny, vw, vh, box.width, box.height);
+}
+const cammsg = document.getElementById("cammsg");
+function cameraMessage(text) {
+  cammsg.hidden = !text;
+  cammsg.textContent = text || "";
+}
+function stopCamera() {
+  if (cameraStream) cameraStream.getTracks().forEach((track) => track.stop());
+  cameraStream = null;
+  video.srcObject = null;
+  if (landmarker && landmarker.close) landmarker.close();
+  landmarker = null;
+}
+function logCamera(reason) {
+  const track = cameraStream && cameraStream.getVideoTracks()[0];
+  console.info("beam camera", {
+    reason,
+    readyState: video.readyState,
+    videoWidth: video.videoWidth,
+    videoHeight: video.videoHeight,
+    track: track ? { readyState: track.readyState, enabled: track.enabled, muted: track.muted, label: track.label } : null
+  });
+}
+let cameraStart = null;
+function camera() {
+  if (cameraStart) return cameraStart;
+  cameraStart = startCamera();
+  return cameraStart;
+}
+async function startCamera() {
+  if (!video || !video.isConnected) {
+    cameraMessage("Camera preview is not ready.");
+    return;
+  }
+  cameraMessage("Starting camera…");
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    cameraMessage("Camera unavailable in this browser.");
+    logCamera("unavailable");
+    return;
+  }
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
+  } catch (err) {
+    const name = err && err.name;
+    console.error("beam camera", err);
+    if (name === "NotAllowedError" || name === "PermissionDeniedError") cameraMessage("Camera permission denied. Allow camera access, then reload.");
+    else if (name === "NotFoundError" || name === "DevicesNotFoundError" || name === "NotReadableError") cameraMessage("No camera was found.");
+    else cameraMessage("Camera unavailable.");
+    logCamera(name || "unavailable");
+    return;
+  }
+  if (!video.isConnected) {
+    stopCamera();
+    return;
+  }
+  video.autoplay = true;
+  video.muted = true;
+  video.playsInline = true;
+  video.srcObject = cameraStream;
+  const track = cameraStream.getVideoTracks()[0];
+  if (track) {
+    track.onended = () => { cameraMessage("Camera unavailable."); logCamera("track-ended"); };
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    const advanced = [];
+    if (caps.exposureMode && caps.exposureMode.includes("continuous")) advanced.push({ exposureMode: "continuous" });
+    if (caps.whiteBalanceMode && caps.whiteBalanceMode.includes("continuous")) advanced.push({ whiteBalanceMode: "continuous" });
+    if (advanced.length) track.applyConstraints({ advanced }).catch(() => {});
+  }
+  const play = async () => {
+    try {
+      await video.play();
+      cameraMessage("");
+      logCamera("playing");
+    } catch (err) {
+      console.error("beam camera playback", err);
+      cameraMessage("Camera playback failed.");
+      logCamera("playback-error");
+    }
+  };
+  if (video.readyState >= 1) await play();
+  else video.onloadedmetadata = () => { play(); };
+  try {
+    const vision = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.17");
+    const files = await vision.FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.17/wasm");
+    landmarker = await vision.HandLandmarker.createFromOptions(files, {
+      baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task" },
+      runningMode: "VIDEO", numHands: 1
+    });
+  } catch (err) {
+    console.error("beam camera tracking", err);
+    cameraMessage("Hand tracking unavailable. The camera preview is still on.");
+  }
+}
+async function frame() {
+  const mouseOn = mouseDown || document.getElementById("mouse").checked;
+  if (!mouseOn && !busy && landmarker && video.readyState >= 2 && video.currentTime !== lastVideo) {
+    busy = true;
+    try {
+      lastVideo = video.currentTime;
+      const result = landmarker.detectForVideo(video, performance.now());
+      const marks = result.landmarks && result.landmarks[0];
+      if (marks) {
+        drawPreview(marks);
+        const score = result.handedness && result.handedness[0] && result.handedness[0][0] ? result.handedness[0][0].score : 0.9;
+        const thumb = marks[4], index = marks[8];
+        const pinch = Math.hypot(thumb.x - index.x, thumb.y - index.y);
+        await step(1 - index.x, index.y, pinch, score, true);
+      } else {
+        clearPreview();
+        await step(0, 0, 1, 0, false);
+      }
+    } finally { busy = false; }
+  }
+  requestAnimationFrame(frame);
+}
+document.getElementById("importer").onchange = async (event) => {
+  const form = new FormData();
+  for (const file of event.target.files) form.append("file", file, file.name);
+  await fetch("/api/tray/import", {method: "POST", body: form});
+  await loadTray();
+};
+let mouseDown = false;
+function sendMouse(ev) {
+  const n = normFromPointer(ev.clientX, ev.clientY);
+  step(n.x, n.y, 0.2, 1, true);
+}
+const stageMain = document.querySelector("main");
+stageMain.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0 || event.target.closest("input, label, a, button")) return;
+  mouseDown = true;
+  stageMain.setPointerCapture(event.pointerId);
+  sendMouse(event);
+});
+stageMain.addEventListener("pointermove", (event) => {
+  if (mouseDown) sendMouse(event);
+});
+function endMouse() { mouseDown = false; }
+stageMain.addEventListener("pointerup", endMouse);
+stageMain.addEventListener("pointercancel", endMouse);
+document.getElementById("mouse").onchange = (event) => {
+  window.onmousemove = event.target.checked ? sendMouse : null;
+};
+deviceEl.addEventListener("click", (event) => {
+  const el = event.target.closest(".device");
+  if (!el || world.hidden) return;
+  const r = el.getBoundingClientRect();
+  const n = normFromPointer(r.left + r.width / 2, r.top + r.height / 2);
+  const x = n.x, y = n.y;
+  (async () => {
+    for (let i = 0; i < 3; i++) await step(x, y, 0.02, 1, true);
+  })();
+});
+window.addEventListener("pagehide", stopCamera);
+loadTray();
+loadDevices();
+setInterval(loadDevices, 3000);
+let lastView = null;
+window.addEventListener("resize", () => {
+  placeDevices();
+  if (lastView) paint(lastView);
+});
+camera();
+requestAnimationFrame(frame);
+paintGuide();
+window.step = step;
+</script>
+</body>
+</html>

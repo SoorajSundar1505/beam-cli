@@ -67,7 +67,7 @@ content between your own devices. No cloud. No accounts.`,
 	root.PersistentFlags().BoolVar(&debugNetwork, "debug", false, "Show underlying network errors")
 	root.AddCommand(
 		cmdInit(), cmdPair(), cmdDevices(), cmdSend(), cmdReceive(), cmdClipboard(),
-		cmdStart(), cmdStop(), cmdStatus(), cmdDaemon(),
+		cmdStart(), cmdStop(), cmdStatus(), cmdDaemon(), cmdPortal(),
 	)
 	return root
 }
