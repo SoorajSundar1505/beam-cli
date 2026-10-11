@@ -82,13 +82,15 @@ Received files go to `~/Downloads`.
 
 ## Portal
 
-`beam portal` opens a local page in the browser. A camera preview sits in the bottom-right corner. Draw a circle in the air with your index finger. When the circle is complete, the ring opens and paired devices appear around it.
+`beam portal` opens a local page in the browser. The page starts dark, with the instruction “Draw a circle to open the portal.” A camera preview sits in the bottom-right corner and shows your hand there. The main view keeps a fingertip cursor and does not draw a guide circle.
+
+Draw one circle in the air with your index finger, in either direction. When that circle is complete, the ring opens and paired devices appear around it.
 
 ```bash
 beam portal --tray ~/Downloads
 ```
 
-Hold your hand near the top or bottom of the file tray to scroll the list. Pinch a device to select it, or click it. Pinch a file to pick it up, then open your hand over the portal or throw the file into it. That uses the existing transfer and shows its real progress. You can import files on the page. Mouse debug stays off unless you turn it on.
+Hold your hand near the top or bottom of the file tray to scroll the list. Pinch a device to select it, or click it. Pinch a file to pick it up, then open your hand over the portal or throw the file into it. That uses the existing transfer and shows its real progress. You can import files on the page. You can also drag a circle on the stage with the mouse. Debug stays off unless you turn it on.
 
 ## Commands
 
