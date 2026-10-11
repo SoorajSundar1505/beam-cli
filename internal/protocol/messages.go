@@ -110,12 +110,22 @@ type Offer struct {
 	Name       string     `json:"name"`
 	MIME       string     `json:"mime,omitempty"`
 	Size       int64      `json:"size"`
+	SHA256     string     `json:"sha256,omitempty"`
+	ChunkSize  int        `json:"chunk_size,omitempty"`
+}
+
+// Span is a half-open range of chunk indexes, [From, To).
+type Span struct {
+	From uint64 `json:"from"`
+	To   uint64 `json:"to"`
 }
 
 type IDMsg struct {
-	ID     string `json:"id"`
-	Reason string `json:"reason,omitempty"`
-	SHA256 string `json:"sha256,omitempty"`
+	ID      string `json:"id"`
+	Reason  string `json:"reason,omitempty"`
+	SHA256  string `json:"sha256,omitempty"`
+	Resume  bool   `json:"resume,omitempty"`
+	Missing []Span `json:"missing,omitempty"`
 }
 
 type ErrorMsg struct {

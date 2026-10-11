@@ -172,8 +172,14 @@ func (v *progressView) Render(out io.Writer, title string, p transfer.Progress) 
 	if d := p.ETA(); d > 0 {
 		eta = fmt.Sprintf("%ds", int(d.Seconds()+0.5))
 	}
+	status := title
+	if p.Retry > 1 {
+		status += fmt.Sprintf("  retry %d", p.Retry)
+	} else if p.Resume {
+		status += "  resumed"
+	}
 	line := fmt.Sprintf("%s  [%s] %3d%%  %s / %s  %s  ETA %s",
-		title, bar, p.Percent(), server.FormatSize(p.Bytes), server.FormatSize(p.Total), formatSpeed(p.Speed()), eta)
+		status, bar, p.Percent(), server.FormatSize(p.Bytes), server.FormatSize(p.Total), formatSpeed(p.Speed()), eta)
 	if extra := v.width - displayWidth(line); extra > 0 {
 		line += strings.Repeat(" ", extra)
 	}
