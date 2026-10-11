@@ -15,7 +15,7 @@ import (
 	"beam/internal/transport"
 )
 
-const chunkSize = 64 * 1024
+const ChunkSize = 64 * 1024
 
 type Progress struct {
 	Name    string
@@ -23,6 +23,8 @@ type Progress struct {
 	Bytes   int64
 	Started time.Time
 	Done    bool
+	Resume  bool
+	Retry   int
 	Err     error
 }
 
@@ -57,6 +59,9 @@ func (p Progress) ETA() time.Duration {
 type Reporter func(Progress)
 
 func SendFile(ctx context.Context, c *transport.Conn, path string, offer protocol.Offer, report Reporter) error {
+	if offer.SHA256 != "" && offer.ChunkSize == ChunkSize {
+		return sendResume(ctx, c, path, offer, report)
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -91,7 +96,7 @@ func sendStream(ctx context.Context, c *transport.Conn, r io.Reader, offer proto
 	}
 
 	h := sha256.New()
-	buf := make([]byte, chunkSize)
+	buf := make([]byte, ChunkSize)
 	var seq uint64
 	var sent int64
 	start := time.Now()
@@ -134,6 +139,9 @@ func sendStream(ctx context.Context, c *transport.Conn, r io.Reader, offer proto
 }
 
 func ReceiveToFile(ctx context.Context, c *transport.Conn, offer protocol.Offer, destDir string, report Reporter) (string, error) {
+	if offer.SHA256 != "" && offer.ChunkSize == ChunkSize {
+		return receiveResume(ctx, c, offer, destDir, c.Remote.DeviceID, report)
+	}
 	name, err := protocol.SafeFileName(offer.Name)
 	if err != nil {
 		_ = c.SendJSON(protocol.MsgReject, protocol.IDMsg{ID: offer.ID, Reason: "invalid filename"})

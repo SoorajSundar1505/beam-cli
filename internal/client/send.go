@@ -116,19 +116,37 @@ func SendFileAs(ctx context.Context, ident *device.Identity, target *device.List
 	if err != nil {
 		return err
 	}
-	c, err := DialTarget(ctx, ident, target)
+	offer, err := transfer.FileOffer(target.ID, path, name)
 	if err != nil {
 		return err
 	}
-	defer c.Close()
-	offer := protocol.Offer{
-		ID:   newID(),
-		Kind: protocol.KindFile,
-		Name: name,
-		MIME: mimeFromName(name),
-		Size: st.Size(),
+	offer.MIME = mimeFromName(name)
+	var last error
+	for attempt := 1; attempt <= transfer.MaxAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		c, err := DialTarget(ctx, ident, target)
+		if err != nil {
+			return err
+		}
+		wrapped := func(p transfer.Progress) {
+			p.Retry = attempt
+			if report != nil {
+				report(p)
+			}
+		}
+		err = transfer.SendFile(ctx, c, path, offer, wrapped)
+		c.Close()
+		if err == nil {
+			return nil
+		}
+		last = err
+		if !transfer.Retryable(err) {
+			return err
+		}
 	}
-	return transfer.SendFile(ctx, c, path, offer, report)
+	return fmt.Errorf("transfer retries exhausted: %w", last)
 }
 
 func mimeFromName(name string) string {

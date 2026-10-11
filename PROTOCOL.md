@@ -104,6 +104,38 @@ SHA-256 is computed while streaming. It is sent only in `Done`. The receiver
 hashes the written bytes and compares. Mismatch or cancel deletes the partial
 file (`*.beam.partial`) and does not replace the destination.
 
+## Resumable file transfer
+
+File offers may include `sha256` (the full-file digest) and `chunk_size`
+(`65536`). Clipboard offers omit both and stay a single sequential stream.
+A receiver that understands those fields stores the partial file and chunk
+hashes under the local data directory, `transfers/in/<id>/`, and answers
+`Accept` with:
+
+```json
+{ "id": "...", "resume": true, "missing": [{ "from": 0, "to": 4 }] }
+```
+
+`missing` lists half-open chunk indexes that are absent or failed verification.
+The sender writes only those chunks. Each `Data` sequence number is the chunk
+index, and the chunk is written at `index * chunk_size`. A later `beam send` of
+the same unchanged file reuses the transfer ID. The receiver loads that state
+after a process restart, re-hashes every stored chunk, and requests anything
+corrupt or missing.
+
+`Done` still carries the full-file SHA-256. The receiver hashes the assembled
+bytes and publishes the download only when that digest, the offer digest, and
+the file size all match. The partial state is then deleted. Unfinished state is
+kept for 7 days.
+
+If the source file's SHA-256 no longer matches the stored transfer, the sender
+stops with `source file changed` and drops that transfer ID. The next send
+starts a new transfer.
+
+Peers that omit `sha256` or `chunk_size`, including older BEAM versions, keep
+the original sequential transfer and delete `*.beam.partial` on failure. No
+migration of those partial files is required.
+
 ## Path safety
 
 Offer `name` is reduced with `filepath.Base`, must be a non-empty single path
