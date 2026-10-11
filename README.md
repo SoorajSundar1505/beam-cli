@@ -1,7 +1,7 @@
 # BEAM
 
 Send files and clipboard text between your own devices on the local network.
-No cloud, no accounts, no GUI. macOS and Windows.
+No cloud and no accounts. macOS and Windows.
 
 ```bash
 beam devices
@@ -69,7 +69,7 @@ Rename this device without changing its identity:
 beam init --name Suraj-Mac
 ```
 
-If a send cannot reach the other device, BEAM tries the newest discovered address once, then prints `Transfer failed: Suraj-Windows is currently unreachable.` Add `--debug` to see the network error. An offline device can queue the file locally until it is back.
+If a send cannot reach the other device, BEAM tries the newest discovered address once, then prints `Transfer failed: Suraj-Windows is currently unreachable.` Add `--debug` to see the network error. A dropped file transfer keeps the chunks already received and continues from there the next time you send the same file. An offline device can queue the file locally until it is back.
 
 ```bash
 beam stop                  # stop the receiver
@@ -79,6 +79,16 @@ beam stop --disable-autostart
 ```
 
 Received files go to `~/Downloads`.
+
+## Portal
+
+`beam portal` opens a local page in the browser. A camera preview sits in the bottom-right corner. Draw a circle in the air with your index finger. When the circle is complete, the ring opens and paired devices appear around it.
+
+```bash
+beam portal --tray ~/Downloads
+```
+
+Hold your hand near the top or bottom of the file tray to scroll the list. Pinch a device to select it, or click it. Pinch a file to pick it up, then open your hand over the portal or throw the file into it. That uses the existing transfer and shows its real progress. You can import files on the page. Mouse debug stays off unless you turn it on.
 
 ## Commands
 
@@ -94,6 +104,7 @@ Received files go to `~/Downloads`.
 | `beam pair` | Show a pairing code |
 | `beam pair --code NNNNNN` | Pair with that code |
 | `beam init [--name NAME]` | Create or rename this device |
+| `beam portal [--tray DIR]` | Open the hand-controlled portal |
 | `beam stop` | Stop the background receiver |
 
 Without `--to`, BEAM asks you to pick a device.
