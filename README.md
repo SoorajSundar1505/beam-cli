@@ -15,17 +15,17 @@ The current release is [v0.1.15](https://github.com/SoorajSundar1505/beam-cli/re
 
 ## Install
 
-macOS, with [Homebrew](https://github.com/SoorajSundar1505/homebrew-beam):
+macOS, with [Homebrew](https://github.com/SoorajSundar1505/homebrew-beam-cli):
 
 ```bash
-brew tap SoorajSundar1505/beam
+brew tap SoorajSundar1505/beam-cli
 brew install beam
 ```
 
-Windows, with [Scoop](https://github.com/SoorajSundar1505/scoop-beam):
+Windows, with [Scoop](https://github.com/SoorajSundar1505/scoop-beam-cli):
 
 ```powershell
-scoop bucket add beam https://github.com/SoorajSundar1505/scoop-beam
+scoop bucket add beam https://github.com/SoorajSundar1505/scoop-beam-cli
 scoop install beam
 ```
 

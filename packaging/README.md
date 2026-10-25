@@ -7,8 +7,8 @@ These files install published GitHub Release binaries. They do not change BEAM.
 
 Copy each directory to its own repository after a release:
 
-- `packaging/homebrew-beam` → `SoorajSundar1505/homebrew-beam`
-- `packaging/scoop-beam` → `SoorajSundar1505/scoop-beam`
+- `packaging/homebrew-beam` → `SoorajSundar1505/homebrew-beam-cli`
+- `packaging/scoop-beam` → `SoorajSundar1505/scoop-beam-cli`
 - `packaging/winget-pkgs/manifests` → a pull request against `microsoft/winget-pkgs`
 
 Do not push those updates from the BEAM release workflow.
