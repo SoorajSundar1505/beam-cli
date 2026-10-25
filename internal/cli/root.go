@@ -47,13 +47,20 @@ var (
 	debugNetwork      bool
 )
 
+// version is overridden for a release build with -ldflags "-X beam/internal/cli.version=...".
+var version = "dev"
+
 func NewRoot() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "beam",
-		Short: "Move files and clipboard between your devices on the local network",
+		Use:     "beam",
+		Version: version,
+		Short:   "Move files and clipboard between your devices on the local network",
 		Long: `BEAM is a CLI-first, local-network tool for sending files and clipboard
 content between your own devices. No cloud. No accounts.`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if f := cmd.Flags().Lookup("version"); f != nil && f.Changed {
+				return nil
+			}
 			if !wakesDaemon(cmd) {
 				return nil
 			}
