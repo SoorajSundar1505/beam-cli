@@ -11,13 +11,13 @@ class Beam < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/SoorajSundar1505/beam-cli/releases/download/v0.1.14/beam-darwin-arm64"
-      sha256 "262676b548e02fb5233b4d3025409f59baed28c06f178dced2e0e3ccf8a51da3"
+      url "https://github.com/SoorajSundar1505/beam-cli/releases/download/v0.1.15/beam-darwin-arm64"
+      sha256 "6df09eb145c706e0650e4b45d0145bf18fd42318e6c85b225da0ea1b08e64210"
     end
 
     on_intel do
-      url "https://github.com/SoorajSundar1505/beam-cli/releases/download/v0.1.14/beam-darwin-amd64"
-      sha256 "c808f179c33119375531dc17d7beab33043d73b356b35ef581fc74cf300ad2bc"
+      url "https://github.com/SoorajSundar1505/beam-cli/releases/download/v0.1.15/beam-darwin-amd64"
+      sha256 "b455d433d5934133ddd5aba166821f46cb938292b3bc0c0a6456de1c0d8aae35"
     end
   end
 
