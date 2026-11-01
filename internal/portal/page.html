@@ -14,24 +14,50 @@
     font: 15px/1.4 ui-sans-serif, system-ui, sans-serif;
   }
   .layout {
-    display: grid; grid-template-columns: 260px minmax(0, 1fr);
+    /* 260px cannot fit 8 readable columns (see note in tray CSS). */
+    display: grid; grid-template-columns: 480px minmax(0, 1fr);
     align-items: stretch; width: 100%; max-width: 100%; height: 100dvh; overflow: hidden;
   }
   aside {
     position: sticky; top: 0; height: 100dvh; max-height: 100dvh; width: 100%;
     min-width: 0; display: flex; flex-direction: column;
-    padding: 22px 16px; border-right: 1px solid rgba(160,190,255,.12);
+    padding: 22px 10px; border-right: 1px solid rgba(160,190,255,.12);
     background: #0b0e16; overflow: hidden;
   }
   aside h1 { flex: none; font-size: 13px; letter-spacing: .14em; color: #9eb0d4; margin: 0 0 12px; }
-  #tray { flex: 1 1 auto; min-height: 0; min-width: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
-  .file {
-    width: 100%; max-width: 100%; min-width: 0; text-align: left; margin: 0 0 8px; padding: 12px;
-    border-radius: 14px; border: 1px solid rgba(180,200,255,.2); background: #121722; color: inherit;
-    overflow-wrap: anywhere; word-break: break-word;
+  /* 8×7 grid. Row height fills the tray so 7 rows stay visible; extras scroll. */
+  #tray {
+    flex: 1 1 auto; min-height: 0; min-width: 0;
+    display: grid;
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    grid-auto-rows: calc((100% - 48px) / 7);
+    gap: 8px; align-content: start;
+    overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain;
   }
-  .file small { display: block; color: #93a0bb; }
-  .file.hover, .file.held { border-color: #ffb15a; box-shadow: 0 0 18px rgba(255,140,40,.55); }
+  .file {
+    box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; height: 100%; min-height: 0;
+    text-align: left; margin: 0; padding: 8px 6px;
+    border-radius: 14px; border: 1px solid rgba(180,200,255,.2); background: #121722; color: inherit;
+    overflow: hidden; display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  }
+  .file-name {
+    display: block; min-width: 0; font-size: 12px; line-height: 1.25;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .file small {
+    display: block; min-width: 0; color: #93a0bb; font-size: 10px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .file.hover {
+    border-color: #ffd7a8;
+    box-shadow: 0 0 22px rgba(255,160,50,.8), inset 0 0 0 1px rgba(255,200,120,.35);
+    outline: 2px solid rgba(255,177,90,.65);
+    outline-offset: 1px;
+  }
+  .file.held {
+    border-color: #ffb15a;
+    box-shadow: 0 0 26px rgba(255,140,40,.95), inset 0 0 0 1px rgba(255,200,120,.5);
+  }
   .tools { flex: none; min-width: 0; max-width: 100%; margin-top: 14px; color: #93a0bb; font-size: 12px; overflow-wrap: anywhere; }
   .tools input { max-width: 100%; }
   main { min-width: 0; max-width: 100%; height: 100dvh; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
@@ -244,8 +270,38 @@ const video = document.getElementById("video");
 const bones = document.getElementById("bones");
 const g = bones.getContext("2d");
 let tray = [], devices = [], sending = false, busy = false, landmarker = null, lastVideo = -1, cameraStream = null;
+let lastView = null;
+// Display-only ink (one active segment). Recognition still uses raw samples via /api/gesture.
+let ink = []; // {x, y, t} normalized stage coords
+let inkEMA = null;
+const INK_JUMP = 0.08;
+const INK_GAP_MS = 80;
+const INK_STEP_PX = 56;
+let diag = { recognizeMs: null, batchMs: null, batchN: 0 };
+// File selection: invisible hit pad + magnet (visible card size unchanged).
+const fileHitPad = 22;
+const fileMagnet = 36; // px pull toward nearest card center
+let stickyFile = -1;
 
 function setStatus(text, kind) { statusEl.textContent = text || ""; statusEl.className = kind || ""; }
+function deviceStatusLabel(device) {
+  const raw = String((device && device.status) || "offline").toLowerCase();
+  if (raw === "online") return "Online";
+  if (raw === "unreachable") return "Unreachable";
+  return "Offline";
+}
+function deviceIsOnline(device) {
+  return String((device && device.status) || "").toLowerCase() === "online";
+}
+function selectedDeviceStatus(dest) {
+  const device = devices[dest];
+  if (!device) return null;
+  const label = deviceStatusLabel(device);
+  return {
+    text: `Selected ${device.name} · ${label}`,
+    kind: deviceIsOnline(device) ? "ok" : "error"
+  };
+}
 async function loadTray() {
   const body = await (await fetch("/api/tray")).json();
   tray = body.items || [];
@@ -254,7 +310,14 @@ async function loadTray() {
     const el = document.createElement("div");
     el.className = "file";
     el.dataset.file = String(i);
-    el.innerHTML = `${item.name}<small>${item.kind}</small>`;
+    el.title = item.name;
+    el.setAttribute("aria-label", item.name);
+    const name = document.createElement("span");
+    name.className = "file-name";
+    name.textContent = item.name;
+    const meta = document.createElement("small");
+    meta.textContent = item.kind;
+    el.append(name, meta);
     trayEl.append(el);
   });
   if (!tray.length) trayEl.textContent = "No files yet. Start with beam portal --tray DIRECTORY, or import files.";
@@ -274,6 +337,15 @@ async function loadDevices() {
     el.innerHTML = `${device.name}<small>${device.status.toUpperCase()}</small>`;
     deviceEl.append(el);
   });
+  if (lastView && !world.hidden && lastView.held < 0 && !sending) {
+    const sel = selectedDeviceStatus(lastView.destination);
+    if (sel) {
+      setStatus(sel.text, sel.kind);
+      document.querySelectorAll(".device").forEach((el, i) => {
+        el.classList.toggle("selected", lastView.destination === i);
+      });
+    }
+  }
 }
 function orbitRadius() {
   const size = world.clientWidth || Math.min(stage.clientWidth, 560);
@@ -351,25 +423,78 @@ function paintGuide() {
   sizeLayer(guide, gg);
 }
 function paintArc(view) {
+  // Clear only — fitted arc must not overlap the fingertip trail.
   sizeLayer(arcLayer, ag);
-  if (!view || view.open || !(view.ringR > 0.04) || !view.sweep) return;
-  if (view.ringX < 0 || view.ringX > 1 || view.ringY < 0 || view.ringY > 1 || view.ringR > 0.46) return;
-  const s = stageSpace();
-  const c = stagePointer(view.ringX, view.ringY);
-  const radius = view.ringR * s.size;
-  if (radius < 18) return;
-  ag.save();
-  ag.beginPath();
-  ag.rect(s.left, s.top, s.size, s.size);
-  ag.clip();
-  const start = view.arc || 0;
-  ag.beginPath();
-  ag.strokeStyle = "rgba(255, 196, 120, .9)";
-  ag.lineWidth = 2.5;
-  ag.lineCap = "round";
-  ag.arc(c.px, c.py, radius, start, start + view.sweep, view.sweep < 0);
-  ag.stroke();
-  ag.restore();
+  void view;
+}
+function clearInk() {
+  ink = [];
+  inkEMA = null;
+}
+// One continuous fingertip segment for display. Gaps/jumps start a new segment
+// (old points discarded) so stale arcs never stack under the live stroke.
+function pushInk(nx, ny, now, present) {
+  if (!present || !world.hidden) {
+    clearInk();
+    return;
+  }
+  if (inkEMA) {
+    const jump = Math.hypot(nx - inkEMA.x, ny - inkEMA.y);
+    const gap = ink.length ? now - ink[ink.length - 1].t : 0;
+    if (jump > INK_JUMP || gap > INK_GAP_MS) clearInk();
+  }
+  if (!inkEMA) {
+    inkEMA = { x: nx, y: ny };
+  } else {
+    // Light EMA — enough to kill zigzag, low enough to stay on the fingertip.
+    const a = 0.5;
+    inkEMA.x += a * (nx - inkEMA.x);
+    inkEMA.y += a * (ny - inkEMA.y);
+  }
+  const x = inkEMA.x, y = inkEMA.y;
+  if (ink.length) {
+    const last = ink[ink.length - 1];
+    const a = stagePointer(last.x, last.y), b = stagePointer(x, y);
+    const dist = Math.hypot(b.px - a.px, b.py - a.py);
+    if (dist > INK_STEP_PX) {
+      clearInk();
+      inkEMA = { x, y };
+    } else if (dist < 1.0) {
+      last.x = x;
+      last.y = y;
+      last.t = now;
+      return;
+    }
+  }
+  ink.push({ x, y, t: now });
+  if (ink.length > 420) ink.shift();
+}
+function paintTrail(view) {
+  sizeLayer(trail, tg);
+  if (view && view.open) {
+    clearInk();
+    return;
+  }
+  // Server reset (new attempt / stall) must wipe display ink too.
+  if (view && (!view.trail || view.trail.length === 0) && ink.length) clearInk();
+  if (ink.length < 2) return;
+  tg.save();
+  tg.strokeStyle = "rgba(255, 186, 110, .95)";
+  tg.lineWidth = 3;
+  tg.lineJoin = "round";
+  tg.lineCap = "round";
+  tg.shadowColor = "rgba(255, 120, 30, .55)";
+  tg.shadowBlur = 8;
+  tg.beginPath();
+  const first = stagePointer(ink[0].x, ink[0].y);
+  tg.moveTo(first.px, first.py);
+  for (let i = 1; i < ink.length; i++) {
+    const p = stagePointer(ink[i].x, ink[i].y);
+    tg.lineTo(p.px, p.py);
+  }
+  tg.stroke();
+  tg.shadowBlur = 0;
+  tg.restore();
 }
 function paint(view) {
   lastView = view;
@@ -378,6 +503,7 @@ function paint(view) {
   world.hidden = !open;
   if (open) placeDevices();
   if (view.recognized) {
+    clearInk();
     world.classList.add("opening");
     portal.classList.remove("sent");
     setTimeout(() => world.classList.remove("opening"), 700);
@@ -386,11 +512,15 @@ function paint(view) {
   document.body.dataset.gesture = view.phase || "IDLE";
   cursor.hidden = false;
   if (view.scroll) trayEl.scrollTop += view.scroll;
-  const finger = !open ? stagePointer(view.x, view.y) : pointerFromNorm(view.x, view.y);
+  let finger = !open ? stagePointer(view.x, view.y) : pointerFromNorm(view.x, view.y);
+  // Magnetic snap only when choosing a file — not while carrying one to the portal.
+  if (open && view.held < 0 && view.hoverFile >= 0) {
+    finger = magnetTowardFile(finger.px, finger.py, view.hoverFile);
+  }
   cursor.style.left = finger.px + "px";
   cursor.style.top = finger.py + "px";
   document.querySelectorAll(".file").forEach((el, i) => {
-    el.classList.toggle("hover", view.hoverFile === i);
+    el.classList.toggle("hover", view.hoverFile === i && view.held !== i);
     el.classList.toggle("held", view.held === i);
   });
   document.querySelectorAll(".device").forEach((el, i) => {
@@ -400,7 +530,7 @@ function paint(view) {
   portal.classList.toggle("hot", view.phase === "THROWING" || view.phase === "DRAGGING");
   paintGuide();
   paintArc(view);
-  sizeLayer(trail, tg);
+  paintTrail(view);
   const showDebug = document.getElementById("skel").checked;
   debugEl.hidden = !showDebug;
   debugEl.textContent = showDebug ? [
@@ -410,6 +540,8 @@ function paint(view) {
     "canvas " + Math.round(finger.px) + ", " + Math.round(finger.py),
     "loss " + (view.lostMs || 0) + "ms",
     "progress " + Math.round(view.degrees || 0) + "°",
+    "batch " + (diag.batchN || 0) + " samples / " + (diag.batchMs != null ? diag.batchMs + "ms" : "—"),
+    "recognize lag " + (diag.recognizeMs != null ? diag.recognizeMs + "ms" : "—"),
     "center " + Number(view.ringX || 0).toFixed(2) + ", " + Number(view.ringY || 0).toFixed(2) + " r " + Number(view.ringR || 0).toFixed(2),
     "reason " + (view.reason || "none")
   ].join("\n") : "";
@@ -423,18 +555,66 @@ function paint(view) {
     if (!open) {
       setStatus(view.message && view.message !== "Start drawing" ? view.message : "Draw a circle to open the portal.", "");
     } else if (view.recognized) {
-      setStatus("Portal opening…", "ok");
+      const lag = diag.recognizeMs != null ? ` (${diag.recognizeMs}ms)` : "";
+      setStatus("Portal opening…" + lag, "ok");
+    } else if (view.held < 0 && view.destination >= 0) {
+      const sel = selectedDeviceStatus(view.destination);
+      if (sel) setStatus(sel.text, sel.kind);
+      else if (view.message) setStatus(view.message, "");
     } else if (view.message) {
       setStatus(view.message, view.send ? "ok" : "");
     }
   }
 }
-function hits(px, py) {
-  let overFile = -1, overDevice = -1, overPortal = false;
+function fileCardCenter(index) {
+  const el = document.querySelector(`.file[data-file="${index}"]`);
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return { cx: r.left + r.width / 2, cy: r.top + r.height / 2, r };
+}
+// Nearest card inside an expanded hit box — pads overlap, so center distance wins.
+function nearestFile(px, py, pad) {
+  let overFile = -1, best = Infinity;
   document.querySelectorAll(".file").forEach((el) => {
     const r = el.getBoundingClientRect();
-    if (px >= r.left && px <= r.right && py >= r.top && py <= r.bottom) overFile = Number(el.dataset.file);
+    const inside = px >= r.left - pad && px <= r.right + pad && py >= r.top - pad && py <= r.bottom + pad;
+    if (!inside) return;
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const dist = Math.hypot(px - cx, py - cy);
+    if (dist < best) {
+      best = dist;
+      overFile = Number(el.dataset.file);
+    }
   });
+  return { overFile, dist: best };
+}
+function magnetTowardFile(px, py, fileIndex) {
+  const c = fileCardCenter(fileIndex);
+  if (!c) return { px, py };
+  const reach = fileMagnet + Math.max(c.r.width, c.r.height) * 0.35;
+  const dist = Math.hypot(px - c.cx, py - c.cy);
+  if (dist > reach || dist < 1) return { px, py };
+  // Smooth pull (not a hard teleport) so selection feels magnetic, not laggy.
+  const t = Math.min(0.65, 0.35 + (1 - dist / reach) * 0.35);
+  return { px: px + (c.cx - px) * t, py: py + (c.cy - py) * t };
+}
+function hits(px, py, pinch) {
+  let overDevice = -1, overPortal = false;
+  let { overFile, dist } = nearestFile(px, py, fileHitPad);
+  // Sticky target while pinching so a slight drift does not drop the grab.
+  const pinching = pinch >= 0 && pinch < 0.16;
+  if (pinching && stickyFile >= 0) {
+    overFile = stickyFile;
+  } else if (overFile >= 0) {
+    stickyFile = overFile;
+  } else if (stickyFile >= 0) {
+    const c = fileCardCenter(stickyFile);
+    if (c && Math.hypot(px - c.cx, py - c.cy) < fileMagnet + 28) overFile = stickyFile;
+    else stickyFile = -1;
+  } else {
+    stickyFile = -1;
+  }
+  void dist;
   if (!world.hidden) {
     let best = Infinity;
     document.querySelectorAll(".device").forEach((el) => {
@@ -443,9 +623,9 @@ function hits(px, py) {
       const pad = 28;
       const dx = px - cx, dy = py - cy;
       const near = Math.abs(dx) <= r.width / 2 + pad && Math.abs(dy) <= r.height / 2 + pad;
-      const dist = Math.hypot(dx, dy);
-      if (near && dist < best) {
-        best = dist;
+      const d = Math.hypot(dx, dy);
+      if (near && d < best) {
+        best = d;
         overDevice = Number(el.dataset.device);
       }
     });
@@ -454,7 +634,7 @@ function hits(px, py) {
     overPortal = Math.hypot(px - (pr.left + pr.width / 2), py - (pr.top + pr.height / 2)) <= radius;
     if (overDevice >= 0) overPortal = false;
   }
-  return {overFile, overDevice, overPortal};
+  return { overFile, overDevice, overPortal };
 }
 function traySample(px, py) {
   const aside = document.querySelector("aside").getBoundingClientRect();
@@ -463,56 +643,117 @@ function traySample(px, py) {
   const trayY = box.height > 0 ? (py - box.top) / box.height : 0.5;
   return {overTray, trayY};
 }
-async function step(x, y, pinch, confidence, present) {
+function gestureFrame(x, y, pinch, confidence, present) {
   const finger = pointerFromNorm(x, y);
-  const px = finger.px, py = finger.py;
-  const hit = hits(px, py);
-  const trayHit = traySample(px, py);
+  let px = finger.px, py = finger.py;
+  const holding = lastView && lastView.held >= 0;
+  // Snap toward a tray card only when picking one up — never while carrying a
+  // file toward the portal (that pulled hits off the portal and blocked send).
+  let hit = hits(px, py, holding ? -1 : pinch);
+  if (!holding && !world.hidden && hit.overFile >= 0 && !(pinch >= 0 && pinch < 0.16 && stickyFile >= 0)) {
+    const snapped = magnetTowardFile(px, py, hit.overFile);
+    px = snapped.px;
+    py = snapped.py;
+    hit = hits(px, py, pinch);
+  }
+  if (world.hidden || holding) stickyFile = -1;
+  if (holding) hit.overFile = -1; // ignore tray hover while dragging
+  const trayHit = traySample(finger.px, finger.py); // scroll uses real tip, not magnet
   const box = portal.getBoundingClientRect();
+  // Portal hit uses the real fingertip (not magnetized tray coords).
+  const portalHit = hits(finger.px, finger.py, -1);
   const portalNorm = normFromPointer(box.left + box.width / 2, box.top + box.height / 2);
-  const res = await fetch("/api/gesture", {
-    method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({
-      present, confidence, x, y, pinch,
-      overFile: hit.overFile, overDevice: hit.overDevice, overPortal: hit.overPortal,
-      overTray: trayHit.overTray, trayY: trayHit.trayY,
-      toPortalX: portalNorm.x - x, toPortalY: portalNorm.y - y
-    })
-  });
-  const view = await res.json();
+  return {
+    present, confidence, x, y, pinch,
+    overFile: hit.overFile,
+    overDevice: portalHit.overDevice,
+    overPortal: portalHit.overPortal,
+    overTray: trayHit.overTray, trayY: trayHit.trayY,
+    toPortalX: present ? portalNorm.x - x : 0,
+    toPortalY: present ? portalNorm.y - y : 0
+  };
+}
+async function applyGestureView(view, drawnAt) {
+  if (view.recognized && drawnAt) {
+    diag.recognizeMs = Math.round(performance.now() - drawnAt);
+  }
   paint(view);
-  if (view.send && !sending) {
+  // Start transfer on send flag, or recover if the server is already TRANSFERRING
+  // (batch replies used to drop mid-batch send:true and leave the UI stuck).
+  const shouldSend = !sending && (
+    view.send ||
+    (view.phase === "TRANSFERRING" && view.held >= 0 && view.destination >= 0)
+  );
+  if (shouldSend) {
     sending = true;
+    // Do not await — keep the gesture pump alive while the job runs.
+    void completeSend(view);
+  }
+}
+async function completeSend(view) {
+  let jobId = null;
+  try {
+    const item = tray[view.held];
+    let device = devices[view.destination];
+    if (!item || !device) throw new Error("Select a device first");
+    // Offline / unreachable: fail immediately (refresh devices with a short cap).
+    const t0 = performance.now();
+    if (!deviceIsOnline(device)) {
+      try {
+        await Promise.race([
+          loadDevices(),
+          new Promise((resolve) => setTimeout(resolve, 120))
+        ]);
+      } catch (_) {}
+      device = devices[view.destination] || device;
+    }
+    if (!deviceIsOnline(device)) {
+      const ms = Math.max(1, Math.round(performance.now() - t0));
+      throw new Error(`${device.name} is ${deviceStatusLabel(device)} (${ms}ms)`);
+    }
     progress.hidden = false;
-    try {
-      const item = tray[view.held];
-      const device = devices[view.destination];
-      if (!item || !device) throw new Error("Select a device first");
-      const started = await fetch("/api/send/tray", {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({device: device.id, item: item.id})
-      });
-      const job = await started.json();
-      if (!started.ok) throw new Error(job.error || "Transfer failed");
-      for (;;) {
-        const state = await (await fetch("/api/jobs/" + job.id)).json();
-        const pct = state.total > 0 ? state.percent : 0;
-        fill.style.width = pct + "%";
-        progressText.textContent = state.total > 0 ? `Sending to ${device.name}… ${pct}%` : `Sending to ${device.name}…`;
-        if (state.status === "done") {
+    progressText.textContent = `Sending to ${device.name}…`;
+    const started = await fetch("/api/send/tray", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({device: device.id, item: item.id})
+    });
+    const job = await started.json();
+    if (!started.ok) throw new Error(job.error || "Transfer failed");
+    jobId = job.id;
+    const deadline = performance.now() + 120000;
+    for (;;) {
+      if (performance.now() > deadline) {
+        if (jobId) await fetch("/api/jobs/" + jobId + "/cancel", {method: "POST"});
+        throw new Error("Transfer timed out");
+      }
+      const state = await (await fetch("/api/jobs/" + jobId)).json();
+      const pct = state.total > 0 ? state.percent : 0;
+      fill.style.width = pct + "%";
+      progressText.textContent = state.total > 0
+        ? `Sending to ${device.name}… ${pct}%`
+        : `Sending to ${device.name}…`;
+      if (state.status === "done") {
         setStatus("File sent", "ok");
         progressText.textContent = "File sent";
         portal.classList.add("sent");
         break;
       }
-        if (state.status === "error") throw new Error(state.error || "Transfer failed");
-        if (state.status === "cancelled") { setStatus("Transfer cancelled"); break; }
-        await new Promise(r => setTimeout(r, 200));
-      }
-    } catch (err) { setStatus(err.message, "error"); }
-    await fetch("/api/gesture/reset", {method: "POST"});
-    sending = false;
-  }
+      if (state.status === "error") throw new Error(state.error || "Transfer failed");
+      if (state.status === "cancelled") { setStatus("Transfer cancelled"); break; }
+      await new Promise(r => setTimeout(r, 200));
+    }
+  } catch (err) { setStatus(err.message, "error"); }
+  try { await fetch("/api/gesture/reset", {method: "POST"}); } catch (_) {}
+  sending = false;
+  fill.style.width = "0%";
+  progress.hidden = true;
+}
+async function step(x, y, pinch, confidence, present) {
+  const res = await fetch("/api/gesture", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(gestureFrame(x, y, pinch, confidence, present))
+  });
+  await applyGestureView(await res.json(), null);
 }
 function fitPreview() {
   const box = video.getBoundingClientRect();
@@ -675,25 +916,72 @@ async function startCamera() {
     cameraMessage("Hand tracking unavailable. The camera preview is still on.");
   }
 }
+// Queue webcam samples; flush as ONE batched /api/gesture call so recognition
+// is not delayed by N serial HTTP round-trips (~150–250ms each).
+let sampleQueue = [];
+let gestureBusy = false;
+function enqueueGesture(sample) {
+  if (!sample.present) {
+    if (sampleQueue.length && !sampleQueue[sampleQueue.length - 1].present) {
+      sampleQueue[sampleQueue.length - 1] = sample;
+    } else sampleQueue.push(sample);
+  } else {
+    sampleQueue.push(sample);
+  }
+  if (sampleQueue.length > 120) {
+    const kept = sampleQueue.slice(0, 12).concat(sampleQueue.slice(-40));
+    sampleQueue = kept.filter((s, i) => i < 12 || i >= kept.length - 40 || i % 2 === 0);
+  }
+  pumpGesture();
+}
+async function pumpGesture() {
+  if (gestureBusy) return;
+  gestureBusy = true;
+  busy = true;
+  try {
+    while (sampleQueue.length) {
+      const batch = sampleQueue.splice(0, sampleQueue.length);
+      const drawnAt = batch.length ? batch[batch.length - 1].t : null;
+      const samples = batch.map((s) =>
+        gestureFrame(s.x, s.y, s.pinch, s.confidence, s.present)
+      );
+      const t0 = performance.now();
+      const res = await fetch("/api/gesture", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ samples })
+      });
+      diag.batchMs = Math.round(performance.now() - t0);
+      diag.batchN = samples.length;
+      await applyGestureView(await res.json(), drawnAt);
+    }
+  } finally {
+    gestureBusy = false;
+    busy = false;
+    if (sampleQueue.length) pumpGesture();
+  }
+}
 async function frame() {
   const mouseOn = mouseDown || document.getElementById("mouse").checked;
-  if (!mouseOn && !busy && landmarker && video.readyState >= 2 && video.currentTime !== lastVideo) {
-    busy = true;
-    try {
-      lastVideo = video.currentTime;
-      const result = landmarker.detectForVideo(video, performance.now());
-      const marks = result.landmarks && result.landmarks[0];
-      if (marks) {
-        drawPreview(marks);
-        const score = result.handedness && result.handedness[0] && result.handedness[0][0] ? result.handedness[0][0].score : 0.9;
-        const thumb = marks[4], index = marks[8];
-        const pinch = Math.hypot(thumb.x - index.x, thumb.y - index.y);
-        await step(1 - index.x, index.y, pinch, score, true);
-      } else {
-        clearPreview();
-        await step(0, 0, 1, 0, false);
-      }
-    } finally { busy = false; }
+  if (!mouseOn && landmarker && video.readyState >= 2 && video.currentTime !== lastVideo) {
+    lastVideo = video.currentTime;
+    const now = performance.now();
+    const result = landmarker.detectForVideo(video, now);
+    const marks = result.landmarks && result.landmarks[0];
+    if (marks && marks[8]) {
+      drawPreview(marks);
+      const score = result.handedness && result.handedness[0] && result.handedness[0][0] ? result.handedness[0][0].score : 0.9;
+      const thumb = marks[4], index = marks[8];
+      const pinch = Math.hypot(thumb.x - index.x, thumb.y - index.y);
+      const nx = 1 - index.x, ny = index.y;
+      pushInk(nx, ny, now, score >= 0.5);
+      paintTrail(lastView || { open: false });
+      enqueueGesture({ x: nx, y: ny, pinch, confidence: score, present: true, t: now });
+    } else {
+      clearPreview();
+      pushInk(0, 0, now, false);
+      paintTrail(lastView || { open: false });
+      enqueueGesture({ x: 0, y: 0, pinch: 1, confidence: 0, present: false, t: now });
+    }
   }
   requestAnimationFrame(frame);
 }
@@ -706,7 +994,12 @@ document.getElementById("importer").onchange = async (event) => {
 let mouseDown = false;
 function sendMouse(ev) {
   const n = normFromPointer(ev.clientX, ev.clientY);
+  pushInk(n.x, n.y, performance.now(), true);
   step(n.x, n.y, 0.2, 1, true);
+}
+function endMouseInk() {
+  mouseDown = false;
+  clearInk();
 }
 const stageMain = document.querySelector("main");
 stageMain.addEventListener("pointerdown", (event) => {
@@ -718,9 +1011,8 @@ stageMain.addEventListener("pointerdown", (event) => {
 stageMain.addEventListener("pointermove", (event) => {
   if (mouseDown) sendMouse(event);
 });
-function endMouse() { mouseDown = false; }
-stageMain.addEventListener("pointerup", endMouse);
-stageMain.addEventListener("pointercancel", endMouse);
+stageMain.addEventListener("pointerup", endMouseInk);
+stageMain.addEventListener("pointercancel", endMouseInk);
 document.getElementById("mouse").onchange = (event) => {
   window.onmousemove = event.target.checked ? sendMouse : null;
 };
@@ -738,7 +1030,6 @@ window.addEventListener("pagehide", stopCamera);
 loadTray();
 loadDevices();
 setInterval(loadDevices, 3000);
-let lastView = null;
 window.addEventListener("resize", () => {
   placeDevices();
   if (lastView) paint(lastView);

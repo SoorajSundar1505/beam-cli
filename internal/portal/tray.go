@@ -37,7 +37,7 @@ func loadTray(dir string) []TrayItem {
 		path := filepath.Join(dir, name)
 		sum := sha256.Sum256([]byte(path))
 		items = append(items, TrayItem{ID: hex.EncodeToString(sum[:8]), Name: name, Kind: kind, Path: path})
-		if len(items) == 24 {
+		if len(items) == 100 {
 			break
 		}
 	}

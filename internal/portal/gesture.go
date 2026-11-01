@@ -23,9 +23,9 @@ const (
 )
 
 const (
-	pinchClose     = 0.09
+	pinchClose     = 0.11 // slightly looser so a casual pinch grabs the hover file
 	minConfidence  = 0.5
-	pinchHold      = 3
+	pinchHold      = 2 // fewer frames → grab feels immediate once hovering
 	lostHandFrames = 8
 	dragDistance   = 0.02
 	throwSpeed     = 0.04
@@ -64,16 +64,17 @@ type Limits struct {
 // DefaultLimits is the circle the portal accepts.
 func DefaultLimits() Limits {
 	return Limits{
-		MinPoints:   24,
-		MinRadius:   0.11,
-		MaxRadius:   0.46,
-		RadiusCV:    0.42,
-		MinSweep:    300 * math.Pi / 180,
-		CloseFactor: 0.58,
+		MinPoints: 18,
+		MinRadius: 0.09,
+		MaxRadius: 0.48,
+		RadiusCV:  0.50,
+		// ~280° + start/end proximity so one imperfect webcam circle opens.
+		MinSweep:    280 * math.Pi / 180,
+		CloseFactor: 1.25,
 		StallFrames: 24,
 		MaxPoints:   480,
-		Smooth:      0.55,
-		Band:        0.45,
+		Smooth:      0.45,
+		Band:        0.55,
 		Stall:       6 * time.Second,
 		Cooldown:    1500 * time.Millisecond,
 		PauseAfter:  400 * time.Millisecond,
@@ -228,8 +229,12 @@ func (m *Machine) Reset() {
 func (m *Machine) Step(f Frame) View {
 	view := View{Phase: m.phase, X: m.x, Y: m.y, Held: m.held, Destination: m.dest, HoverFile: -1, HoverDevice: -1}
 	if m.sent {
+		// Keep the portal visible while the client finishes /api/send/*.
+		// Returning a zero Open previously hid #world mid-transfer ("portal vanishes").
 		view.Phase = PhaseTransferring
 		m.phase = PhaseTransferring
+		view.Open = m.open
+		view.Message = "Sending"
 		return view
 	}
 	tracked := f.Present && f.Confidence >= minConfidence
@@ -285,20 +290,27 @@ func (m *Machine) Step(f Frame) View {
 	pinchDown := m.pinchOn == pinchHold
 	pinchUp := m.pinchOff == pinchHold
 
+	// While drawing a circle, never scroll/clear the tray stroke. The left
+	// trayBand maps into OverTray and was wiping one-shot circles mid-arc.
+	if !m.open {
+		drawing := m.started || m.guideOn || len(m.path) >= 8
+		if !drawing {
+			scrolled := m.scrollTray(f, &view)
+			if m.phase == PhaseScrolling && !scrolled {
+				m.phase = PhaseReady
+			}
+			if scrolled {
+				return m.fill(view)
+			}
+		}
+		return m.draw(f, view)
+	}
 	scrolled := m.scrollTray(f, &view)
 	if m.phase == PhaseScrolling && !scrolled {
-		if m.open {
-			m.phase = PhaseIdle
-		} else {
-			m.phase = PhaseReady
-		}
+		m.phase = PhaseIdle
 	}
 	if scrolled {
 		return m.fill(view)
-	}
-
-	if !m.open {
-		return m.draw(f, view)
 	}
 	now := m.clock()
 	m.x = m.fx.filter(f.X, now)
@@ -332,11 +344,12 @@ func (m *Machine) Step(f Frame) View {
 			m.held = f.OverFile
 			m.phase = PhaseGrabbed
 			m.grabX, m.grabY = m.x, m.y
-		} else if pinchDown && f.OverDevice >= 0 {
+		} else if closed && f.OverDevice >= 0 && m.pinchOn >= 1 {
+			// Device selection is immediate on the first closed pinch frame.
 			m.dest = f.OverDevice
 			m.phase = PhaseDestination
 			view.Message = "Device selected"
-		} else if m.pinchOn > 0 && m.pinchOn < pinchHold && (f.OverFile >= 0 || f.OverDevice >= 0) {
+		} else if m.pinchOn > 0 && m.pinchOn < pinchHold && f.OverFile >= 0 {
 			m.phase = PhasePinching
 			view.Message = "Pinch"
 		} else if m.phase != PhaseDestination && (f.OverFile >= 0 || f.OverDevice >= 0) {
@@ -625,18 +638,27 @@ func (m *Machine) advance(x, y float64, forceCut bool) bool {
 // addSweep keeps the angle already earned. A brief reversal or a tracking
 // gap does not subtract progress or demand another revolution.
 func (m *Machine) addSweep(d float64, cut bool) {
-	if cut || math.Abs(d) > 1.05 {
-		if m.reason == "" {
-			m.reason = "gap"
-		}
+	ad := math.Abs(d)
+	if ad > 0.95*math.Pi {
+		m.reason = "gap"
 		return
+	}
+	// Dropped webcam frames often span >60°. Credit a capped step instead of
+	// discarding progress (that left one-shot circles stuck around 40–60%).
+	if ad > 1.05 {
+		d = math.Copysign(1.05, d)
+		m.reason = "fast"
+	} else if cut && ad > 0.5 {
+		m.reason = "resume"
+	} else if cut {
+		// Tiny cut with little motion: keep continuity.
 	}
 	if m.dir == 0 {
 		m.guideSweep += d
 		switch {
-		case m.guideSweep > 0.45:
+		case m.guideSweep > 0.35:
 			m.dir = 1
-		case m.guideSweep < -0.45:
+		case m.guideSweep < -0.35:
 			m.dir = -1
 		}
 		return
@@ -645,7 +667,7 @@ func (m *Machine) addSweep(d float64, cut bool) {
 		m.guideSweep += d
 		return
 	}
-	if math.Abs(d) > 0.08 && m.reason == "" {
+	if ad > 0.12 && m.reason == "" {
 		m.reason = "reverse"
 	}
 }
@@ -788,10 +810,46 @@ func (m *Machine) circle() bool {
 	if !m.guideOn {
 		return false
 	}
-	if len(m.trail) < 8 {
+	minPts := m.limits.MinPoints
+	if minPts < 8 {
+		minPts = 8
+	}
+	if len(m.trail) < 8 || len(m.path) < minPts {
 		return false
 	}
-	return math.Abs(m.guideSweep) >= m.limits.MinSweep
+	sweep := math.Abs(m.guideSweep)
+	minSweep := m.limits.MinSweep
+	if minSweep <= 0 {
+		minSweep = 280 * math.Pi / 180
+	}
+	closeFactor := m.limits.CloseFactor
+	if closeFactor <= 0 {
+		closeFactor = 1.25
+	}
+	first, last := m.trail[0], m.trail[len(m.trail)-1]
+	closeNorm := 0.0
+	if m.guideR > 1e-4 {
+		closeNorm = math.Hypot(first.X-last.X, first.Y-last.Y) / m.guideR
+	}
+	okClose := closeNorm <= closeFactor
+	tightClose := closeNorm <= closeFactor*0.85
+	strongSweep := sweep >= math.Max(minSweep, 320*math.Pi/180)
+	switch {
+	case sweep >= minSweep && okClose:
+		return true
+	case sweep >= minSweep*0.96 && tightClose:
+		return true
+	case strongSweep && closeNorm <= closeFactor*1.25:
+		return true
+	default:
+		if sweep < minSweep {
+			return false
+		}
+		if m.reason == "" {
+			m.reason = "close"
+		}
+		return false
+	}
 }
 
 func (m *Machine) trackGuide() {

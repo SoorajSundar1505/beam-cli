@@ -140,8 +140,40 @@ func (s *server) gesture(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method", http.StatusMethodNotAllowed)
 		return
 	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	// Batch: {"samples":[...]} processes many frames in one round-trip so a
+	// 1s circle is not stuck behind ~30 serial HTTP calls (~5–7s of queue lag).
+	var batch struct {
+		Samples []Frame `json:"samples"`
+	}
+	if err := json.Unmarshal(raw, &batch); err == nil && len(batch.Samples) > 0 {
+		s.mu.Lock()
+		var view View
+		// Batches only return the final Step result. One-shot flags like Send /
+		// Recognized fire on a middle sample then clear — OR them onto the reply
+		// so the client does not sit forever in TRANSFERRING without starting /api/send.
+		send, recognized := false, false
+		for i := range batch.Samples {
+			view = s.hand.Step(batch.Samples[i])
+			send = send || view.Send
+			recognized = recognized || view.Recognized
+		}
+		if send {
+			view.Send = true
+		}
+		if recognized {
+			view.Recognized = true
+		}
+		s.mu.Unlock()
+		writeJSON(w, view)
+		return
+	}
 	var frame Frame
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&frame); err != nil {
+	if err := json.Unmarshal(raw, &frame); err != nil {
 		writeErr(w, err)
 		return
 	}

@@ -19,6 +19,19 @@ func TestPageScrollsAndPortalStartsClosed(t *testing.T) {
 		"playsInline",
 		"pagehide",
 		"overTray",
+		"grid-template-columns: 480px minmax(0, 1fr)",
+		"grid-template-columns: repeat(8, minmax(0, 1fr))",
+		"calc((100% - 48px) / 7)",
+		"text-overflow: ellipsis",
+		"white-space: nowrap",
+		"paintTrail",
+		"pushInk",
+		"clearInk",
+		"enqueueGesture",
+		"samples",
+		"fileHitPad",
+		"magnetTowardFile",
+		"nearestFile",
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("page missing %s", want)

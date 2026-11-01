@@ -560,6 +560,15 @@ func TestHoverThenGrabAndDrag(t *testing.T) {
 	}
 }
 
+func TestFirstPinchSelectsDeviceImmediately(t *testing.T) {
+	m := NewMachine()
+	openPortal(t, m)
+	view := m.Step(tracked(0.8, 0.3, 0.02, -1, 2, false))
+	if view.Phase != PhaseDestination || view.Destination != 2 || view.Message != "Device selected" {
+		t.Fatalf("first pinch should select device: %+v", view)
+	}
+}
+
 func TestPinchSelectsDeviceBeforeSend(t *testing.T) {
 	m := NewMachine()
 	openPortal(t, m)
@@ -582,6 +591,9 @@ func TestPinchSelectsDeviceBeforeSend(t *testing.T) {
 	again := m.Step(tracked(0.5, 0.4, 0.2, -1, -1, true))
 	if again.Send {
 		t.Fatal("transfer fired twice")
+	}
+	if !again.Open || again.Phase != PhaseTransferring {
+		t.Fatalf("portal must stay open during transfer: %+v", again)
 	}
 	m.Reset()
 	if m.phase != PhaseDestination || m.held != -1 || !m.open {

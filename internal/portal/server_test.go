@@ -279,3 +279,52 @@ func TestGestureReleaseStartsOneTransfer(t *testing.T) {
 		t.Fatalf("SendFile calls %d", calls.Load())
 	}
 }
+
+func TestBatchPreservesMidBatchSend(t *testing.T) {
+	s := &server{opt: Options{}, jobs: map[string]*job{}, hand: NewMachine()}
+	srv := httptest.NewServer(s.routes())
+	defer srv.Close()
+	post := func(payload any) View {
+		t.Helper()
+		raw, _ := json.Marshal(payload)
+		res, err := http.Post(srv.URL+"/api/gesture", "application/json", bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var view View
+		if err := json.NewDecoder(res.Body).Decode(&view); err != nil {
+			t.Fatal(err)
+		}
+		return view
+	}
+	circle := make([]Frame, 0, 41)
+	for i := 0; i <= 40; i++ {
+		ang := -math.Pi/2 + 2*math.Pi*float64(i)/40
+		circle = append(circle, Frame{
+			Present: true, Confidence: 1, Pinch: 0.2, OverFile: -1, OverDevice: -1,
+			X: 0.5 + 0.14*math.Cos(ang), Y: 0.45 + 0.14*math.Sin(ang),
+		})
+	}
+	post(map[string]any{"samples": circle})
+	selectDev := make([]Frame, 0, pinchHold)
+	for i := 0; i < pinchHold; i++ {
+		selectDev = append(selectDev, tracked(0.8, 0.3, 0.02, -1, 0, false))
+	}
+	post(map[string]any{"samples": selectDev})
+	post(tracked(0.8, 0.3, 0.2, -1, -1, false))
+	grab := make([]Frame, 0, pinchHold)
+	for i := 0; i < pinchHold; i++ {
+		grab = append(grab, tracked(0.1, 0.2, 0.02, 0, -1, false))
+	}
+	post(map[string]any{"samples": grab})
+	// Release is the first sample; trailing samples would wipe Send without OR-merge.
+	view := post(map[string]any{"samples": []Frame{
+		tracked(0.5, 0.4, 0.2, -1, -1, true),
+		tracked(0.51, 0.41, 0.2, -1, -1, true),
+		tracked(0.52, 0.42, 0.2, -1, -1, true),
+	}})
+	if !view.Send || view.Phase != PhaseTransferring || view.Held != 0 || view.Destination != 0 {
+		t.Fatalf("batch dropped send: %+v", view)
+	}
+}
